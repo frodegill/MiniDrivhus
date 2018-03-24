@@ -1,0 +1,14 @@
+#!/bin/bash
+#
+
+if [ "$1" = "autoconf" ]; then
+	echo yes 
+	exit 0
+fi
+
+if [ "$1" = "config" ]; then
+	wget -q -O - http://10.0.0.206/count/config
+	exit 0
+fi
+
+wget -q -O - http://10.0.0.206/count/values
