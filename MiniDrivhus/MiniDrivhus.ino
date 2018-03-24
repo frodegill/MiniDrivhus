@@ -4,7 +4,7 @@
 #include <Ticker.h>
 
 static const char* SSID = "gill-roxrud";
-static const char* PASSWORD = "20AADFFCEEC226FF8AD53DFCC5";
+static const char* PASSWORD = "******";
 
 #define DHT11_PIN                   (D2)
 #define WATERSENSOR_PIN             (A0)
