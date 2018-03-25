@@ -76,7 +76,7 @@ void onTick()
       {
         int value = max(0, min(1023, analogRead(WATERSENSOR_PIN)));
         digitalWrite(WATERSENSOR_ACTIVATE_PIN, LOW);
-        watersensor_value = 100.0*value/1023.0;
+        watersensor_value = 100.0 - 100.0*value/1023.0;
 
         if (value >= PUMP_TRIGGER_VALUE)
         {
