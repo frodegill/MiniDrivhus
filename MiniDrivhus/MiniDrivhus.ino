@@ -6,6 +6,7 @@
 static const char* SSID = "gill-roxrud";
 static const char* PASSWORD = "******";
 
+#define SETUP_MODE_PIN              (D3)
 #define DHT11_PIN                   (D2)
 #define WATERSENSOR_PIN             (A0)
 #define WATERSENSOR_ACTIVATE_PIN    (D4)
@@ -13,16 +14,17 @@ static const char* PASSWORD = "******";
 #define LIGHTSENSOR_ACTIVATE_PIN    (D6)
 #define PUMP_PIN                    (D5)
 
-#define PUMP_TRIGGER_VALUE          (1000)    //Value on WATER_SENSOR_PIN to trigger start of motor
+#define PUMP_TRIGGER_VALUE          (1023*0.35) //Value on WATER_SENSOR_PIN to trigger start of motor
 
 #define LIGHTSENSOR_ACTIVATION_TIME (25)      //ms to activate sensor
 #define DELAY_BETWEEN_ACTIVE_SENSORS (25)   //ms between activating sensor
 #define WATERSENSOR_ACTIVATION_TIME (25)      //ms to activate sensor
 #define PUMP_DURATION               (5*1000)  //ms to run pump
-#define PUMP_IDLE_DELAY_TIME        (2*60*1000) //ms min. time between pump trigger
+#define PUMP_IDLE_DELAY_TIME        (20*60*1000) //ms min. time between pump trigger
 #define SENSOR_DELAY_TIME           (5*1000)  //ms min. time between sensor activation
 
 enum State {
+  SETUP_MODE,
   ACTIVATE_LIGHTSENSOR,
   READ_LIGHTSENSOR,
   ACTIVATE_WATERSENSOR,
@@ -161,6 +163,7 @@ void setup()
 
   dht.setup(DHT11_PIN, DHTesp::DHT11);
 
+  pinMode(SETUP_MODE_PIN, INPUT_PULLUP);
   pinMode(WATERSENSOR_PIN, INPUT);
   pinMode(WATERSENSOR_ACTIVATE_PIN, OUTPUT);
   pinMode(LIGHTSENSOR_PIN, INPUT);
@@ -171,27 +174,35 @@ void setup()
   digitalWrite(LIGHTSENSOR_ACTIVATE_PIN, LOW);
   digitalWrite(PUMP_PIN, LOW);
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(SSID, PASSWORD);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+  if (LOW == digitalRead(SETUP_MODE_PIN))
+  {
+    state = SETUP_MODE;
+    WiFi.mode(WIFI_AP);
   }
-
-  server.on(F("/count/config"), handleCountConfig);
-  server.on(F("/count/values"), handleCountValues);
-  server.on(F("/sensors/config"), handleSensorsConfig);
-  server.on(F("/sensors/values"), handleSensorsValues);
-  server.onNotFound(handleNotFound);
-  server.begin();
-
-  state = ACTIVATE_LIGHTSENSOR;
-  watersensor_value = 0.0;
-  lightsensor_value = 0.0;
-  tempsensor_value = 0.0;
-  humiditysensor_value = 0.0;
-  pump_start_count = 0;
-  should_read_temp_sensor = false;
-  onTick();
+  else
+  {
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(SSID, PASSWORD);
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+    }
+  
+    server.on(F("/count/config"), handleCountConfig);
+    server.on(F("/count/values"), handleCountValues);
+    server.on(F("/sensors/config"), handleSensorsConfig);
+    server.on(F("/sensors/values"), handleSensorsValues);
+    server.onNotFound(handleNotFound);
+    server.begin();
+  
+    state = ACTIVATE_LIGHTSENSOR;
+    watersensor_value = 0.0;
+    lightsensor_value = 0.0;
+    tempsensor_value = 0.0;
+    humiditysensor_value = 0.0;
+    pump_start_count = 0;
+    should_read_temp_sensor = false;
+    onTick();
+  }
 }
 
 void loop()
@@ -210,4 +221,3 @@ void loop()
     }
   }
 }
-
