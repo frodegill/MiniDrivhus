@@ -1,20 +1,21 @@
 #include <DHTesp.h>
+#include <DNSServer.h>
+#include <EEPROM.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <Ticker.h>
 
-static const char* SSID = "gill-roxrud";
-static const char* PASSWORD = "******";
+static const char* SETUP_SSID = "sensor-setup";
+static const byte EEPROM_INITIALIZED_MARKER = 0xF1; //Just a magic number
 
-#define SETUP_MODE_PIN              (D3)
+
+#define SETUP_MODE_PIN              (D7)
 #define DHT11_PIN                   (D2)
 #define WATERSENSOR_PIN             (A0)
 #define WATERSENSOR_ACTIVATE_PIN    (D4)
 #define LIGHTSENSOR_PIN             (A0)
 #define LIGHTSENSOR_ACTIVATE_PIN    (D6)
 #define PUMP_PIN                    (D5)
-
-#define PUMP_TRIGGER_VALUE          (1023*0.35) //Value on WATER_SENSOR_PIN to trigger start of motor
 
 #define LIGHTSENSOR_ACTIVATION_TIME (25)      //ms to activate sensor
 #define DELAY_BETWEEN_ACTIVE_SENSORS (25)   //ms between activating sensor
@@ -32,9 +33,14 @@ enum State {
   STOP_PUMP
 };
 
+
 DHTesp dht;
 ESP8266WebServer server(80);
 Ticker ticker;
+
+DNSServer dnsServer;
+static const byte DNS_PORT = 53;
+IPAddress apIP(192, 168, 4, 1);
 
 volatile State state;
 volatile float lightsensor_value;
@@ -45,6 +51,23 @@ volatile bool should_read_temp_sensor;
 float tempsensor_value;
 float humiditysensor_value;
 
+#define MAX_SSID_LENGTH        (32)
+#define MAX_PASSWORD_LENGTH    (64)
+#define MAX_TRIGGER_LENGTH     (5)
+#define TRIGGER_PARAM_DECIMALS (2)
+
+char ssid_param[MAX_SSID_LENGTH+1];
+char password_param[MAX_PASSWORD_LENGTH+1];
+float pump_trigger_param; //100.0 - 100.0*WATER_SENSOR_PIN/1023.0. Trigger start of motor
+
+
+
+float readAndDeactivateWaterSensor()
+{
+  int value = max(0, min(1023, analogRead(WATERSENSOR_PIN)));
+  digitalWrite(WATERSENSOR_ACTIVATE_PIN, LOW);
+  return 100.0 - 100.0*value/1023.0;
+}
 
 void onTick()
 {
@@ -76,11 +99,8 @@ void onTick()
       }
     case READ_WATERSENSOR:
       {
-        int value = max(0, min(1023, analogRead(WATERSENSOR_PIN)));
-        digitalWrite(WATERSENSOR_ACTIVATE_PIN, LOW);
-        watersensor_value = 100.0 - 100.0*value/1023.0;
-
-        if (value >= PUMP_TRIGGER_VALUE)
+        watersensor_value = readAndDeactivateWaterSensor();
+        if (watersensor_value < pump_trigger_param)
         {
           pump_start_count++;
           digitalWrite(PUMP_PIN, HIGH);
@@ -104,6 +124,88 @@ void onTick()
         break;
       }
   }
+}
+
+void read_persistent_string(char* s, int max_length, int& adr)
+{
+  int i = 0;
+  byte c;
+  do {
+    c = EEPROM.read(adr++);
+    if (i<max_length)
+    {
+      s[i++] = static_cast<char>(c);
+    }
+  } while (c!=0);
+  s[i] = 0;
+}
+
+void read_persistent_float(float& f, int decimals, int& adr)
+{
+  int i = 0;
+  byte c;
+  do {
+    c = EEPROM.read(adr++);
+    if (c>='0' && c<='9')
+    {
+      i = 10*i + (c-'0');
+    }
+  } while (c!=0);
+
+  f = i;
+  for (i=0; i<decimals; i++)
+  {
+    f = f/10.0f;
+  }
+}
+
+void read_persistent_params()
+{
+  int adr = 0;
+  if (EEPROM_INITIALIZED_MARKER != EEPROM.read(adr++))
+  {
+    ssid_param[0] = 0;
+    password_param[0] = 0;
+    pump_trigger_param = 0.0;
+  } else {
+    read_persistent_string(ssid_param, MAX_SSID_LENGTH, adr);
+    read_persistent_string(password_param, MAX_PASSWORD_LENGTH, adr);
+    read_persistent_float(pump_trigger_param, TRIGGER_PARAM_DECIMALS, adr);
+  }
+}
+
+void write_persistent_string(const char* s, size_t max_length, int& adr)
+{
+  for (int i=0; i<min(strlen(s), max_length); i++)
+  {
+    EEPROM.write(adr++, s[i]);
+  }
+  EEPROM.write(adr++, 0);
+}
+
+void write_persistent_params(const char* ssid, const char* password, float pump_trigger_value)
+{
+  int adr = 0;
+  EEPROM.write(adr++, EEPROM_INITIALIZED_MARKER);
+  write_persistent_string(ssid, MAX_SSID_LENGTH, adr);
+  write_persistent_string(password, MAX_PASSWORD_LENGTH, adr);
+
+  int i;
+  for (i=0; i<TRIGGER_PARAM_DECIMALS; i++)
+  {
+    pump_trigger_value *= 10.0f;
+  }
+  char pump_trigger_strvalue[MAX_TRIGGER_LENGTH+1];
+  int pump_trigger_intvalue = pump_trigger_value;
+  for (i=0; i<MAX_TRIGGER_LENGTH; i++)
+  {
+    pump_trigger_strvalue[MAX_TRIGGER_LENGTH-i-1] = '0'+(pump_trigger_intvalue%10);
+    pump_trigger_intvalue/=10;
+  }
+  pump_trigger_strvalue[MAX_TRIGGER_LENGTH] = 0;
+  write_persistent_string(pump_trigger_strvalue, MAX_TRIGGER_LENGTH, adr);
+
+  EEPROM.commit();
 }
 
 void handleCountConfig() {
@@ -157,9 +259,74 @@ void handleNotFound() {
   server.send(404, F("text/plain"), F("Page Not Found\n"));
 }
 
+void handleSetupRoot() {
+  if (server.hasArg("ssid") || server.hasArg("password") || server.hasArg("trigger_value"))
+  {
+    if (server.hasArg("ssid"))
+    {
+      strncpy(ssid_param, server.arg("ssid").c_str(), MAX_SSID_LENGTH);
+      ssid_param[MAX_SSID_LENGTH] = 0;
+    }
+    
+    if (server.hasArg("password") && !server.arg("password").equals(F("password")))
+    {
+      strncpy(password_param, server.arg("password").c_str(), MAX_PASSWORD_LENGTH);
+      password_param[MAX_PASSWORD_LENGTH] = 0;
+    }
+    
+    if (server.hasArg("trigger_value"))
+    {
+      pump_trigger_param = server.arg("trigger_value").toFloat();
+    }
+    
+    write_persistent_params(ssid_param, password_param, pump_trigger_param);
+
+    server.send(200, F("text/plain"), F("Settings saved"));
+  }
+  else
+  {
+    read_persistent_params();
+
+    digitalWrite(WATERSENSOR_ACTIVATE_PIN, HIGH);
+    delay(WATERSENSOR_ACTIVATION_TIME);
+    float current_value = readAndDeactivateWaterSensor();
+    
+    String body = F("<!doctype html>"\
+                    "<html lang=\"en\">"\
+                    "<head>"\
+                     "<meta charset=\"utf-8\">"\
+                     "<title>Setup</title>"\
+                     "<style>"\
+                      "form {margin: 0.5em;}"\
+                      "input {margin: 0.2em;}"\
+                     "</style>"\
+                    "</head>"\
+                    "<body>"\
+                     "<form method=\"post\">"\
+                      "SSID:<input type=\"text\" name=\"ssid\" required maxlength=\"");
+    body += String(MAX_SSID_LENGTH);
+    body += F("\" autofocus value=\"");
+    body += ssid_param;
+    body += F("\"/><br/>"\
+              "Password:<input type=\"password\" name=\"password\" maxlength=\"");
+    body += String(MAX_PASSWORD_LENGTH);
+    body += F("\" value=\"password\"/><br/>"\
+              "Pump Trigger Value:<input type=\"number\" name=\"trigger_value\" required min=\"0\" max=\"100\" step=\"0.01\" value=\"");
+    body += String(pump_trigger_param, TRIGGER_PARAM_DECIMALS);
+    body += F("\"/> (Current sensor value: ");
+    body += String(current_value, TRIGGER_PARAM_DECIMALS);
+    body += F(")<br/>"\
+              "<input type=\"submit\" value=\"Submit\"/>"\
+              "</form>"\
+             "</body>"\
+             "</html>");
+    server.send(200, F("text/html"), body);
+  }
+}
+
 void setup()
 {
-  Serial.begin(115200);
+  EEPROM.begin(1 + MAX_SSID_LENGTH + 1 + MAX_PASSWORD_LENGTH + 1 + MAX_TRIGGER_LENGTH + 1);
 
   dht.setup(DHT11_PIN, DHTesp::DHT11);
 
@@ -177,12 +344,18 @@ void setup()
   if (LOW == digitalRead(SETUP_MODE_PIN))
   {
     state = SETUP_MODE;
-    WiFi.mode(WIFI_AP);
+    WiFi.softAP(SETUP_SSID);
+    dnsServer.start(DNS_PORT, "*", apIP);
+
+    server.on("/", handleSetupRoot);
+    server.begin();
   }
   else
   {
+    read_persistent_params();
+    
     WiFi.mode(WIFI_STA);
-    WiFi.begin(SSID, PASSWORD);
+    WiFi.begin(ssid_param, password_param);
     while (WiFi.status() != WL_CONNECTED) {
       delay(500);
     }
@@ -207,6 +380,10 @@ void setup()
 
 void loop()
 {
+  if (state == SETUP_MODE) {
+      dnsServer.processNextRequest();
+  }
+
   server.handleClient();
 
   delay(dht.getMinimumSamplingPeriod());
