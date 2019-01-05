@@ -3,130 +3,226 @@
 #include <EEPROM.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <PubSubClient.h>
 #include <Ticker.h>
+
+// PCB v2
 
 static const char* SETUP_SSID = "sensor-setup";
 static const byte EEPROM_INITIALIZED_MARKER = 0xF1; //Just a magic number
 
+static const byte SETUP_MODE_PIN           = D9;
+static const byte PLANT_SENSOR_MODE_PIN    = D8;
+static const byte PLANT_VALVE_MODE_PIN     = D4;
+static const byte PLANT_SELECT_PINS[]      = {D3, D6, D7, D5};
+static const byte LIGHTSENSOR_ACTIVATE_PIN = D10;
+static const byte TEMPHUMIDSENSOR_PIN      = D2;
+static const byte ANALOG_SENSOR_PIN        = A0;
 
-#define SETUP_MODE_PIN              (D7)
-#define DHT11_PIN                   (D2)
-#define WATERSENSOR_PIN             (A0)
-#define WATERSENSOR_ACTIVATE_PIN    (D4)
-#define LIGHTSENSOR_PIN             (A0)
-#define LIGHTSENSOR_ACTIVATE_PIN    (D6)
-#define PUMP_PIN                    (D5)
+static const byte PLANT_COUNT = sizeof(PLANT_SELECT_PINS)/sizeof(PLANT_SELECT_PINS[0]);
 
-#define LIGHTSENSOR_ACTIVATION_TIME (25)      //ms to activate sensor
-#define DELAY_BETWEEN_ACTIVE_SENSORS (25)   //ms between activating sensor
-#define WATERSENSOR_ACTIVATION_TIME (25)      //ms to activate sensor
-#define PUMP_DURATION               (5*1000)  //ms to run pump
-#define PUMP_IDLE_DELAY_TIME        (20*60*1000) //ms min. time between pump trigger
-#define SENSOR_DELAY_TIME           (5*1000)  //ms min. time between sensor activation
+static const byte DELAY_BETWEEN_ACTIVE_SENSORS = 25;     //ms between activating sensors
+static const byte DEFAULT_WATER_VALVE_DURATION        = 5*1000; //ms to keep valve open
+static const byte DEFAULT_WATER_VALVE_IDLE_DELAY_TIME = 20*60*1000; //ms min. time between pump trigger
+static const byte SENSOR_DELAY_TIME            = 5*1000; //ms min. time between sensor activation
+
 
 enum State {
   SETUP_MODE,
+  START,
+  ACTIVATE_PLANT_SENSOR_MODE,
+  ACTIVATE_FIRST_PLANT_SENSOR,
+  ACTIVATE_LAST_PLANT_SENSOR = ACTIVATE_FIRST_PLANT_SENSOR + (PLANT_COUNT-1),
+  READ_FIRST_PLANT_SENSOR,
+  READ_LAST_PLANT_SENSOR = READ_FIRST_PLANT_SENSOR + (PLANT_COUNT-1),
+  DEACTIVATE_PLANT_SENSOR_MODE,
+
+  ACTIVATE_PLANT_VALVE_MODE,
+  ACTIVATE_FIRST_PLANT_VALVE,
+  ACTIVATE_LAST_PLANT_VALVE = ACTIVATE_FIRST_PLANT_VALVE + (PLANT_COUNT-1),
+  DEACTIVATE_FIRST_PLANT_VALVE,
+  DEACTIVATE_LAST_PLANT_VALVE = DEACTIVATE_FIRST_PLANT_VALVE + (PLANT_COUNT-1),
+  DEACTIVATE_PLANT_VALVE_MODE,
+
   ACTIVATE_LIGHTSENSOR,
   READ_LIGHTSENSOR,
-  ACTIVATE_WATERSENSOR,
-  READ_WATERSENSOR,
-  STOP_PUMP
+  ACTIVATE_TEMPHUMIDSENSOR,
+  READ_TEMPHUMIDSENSOR, //DHT11 cannot be read in interrupt, so this state is unused (reading is done in main loop)
+  FINISHED
 };
 
 
 DHTesp dht;
 ESP8266WebServer server(80);
-Ticker ticker;
+
+WiFiClient esp_client;
+PubSubClient mqtt_client(esp_client);
 
 DNSServer dnsServer;
 static const byte DNS_PORT = 53;
 IPAddress apIP(192, 168, 4, 1);
 
+Ticker ticker;
+
 volatile State state;
-volatile float lightsensor_value;
-volatile float watersensor_value;
-volatile int pump_start_count;
 volatile bool should_read_temp_sensor;
 
+volatile uint16_t plant_sensor_value[PLANT_COUNT];
+volatile uint16_t plant_valve_open_count[PLANT_COUNT];
+volatile float lightsensor_value;
 float tempsensor_value;
 float humiditysensor_value;
 
-#define MAX_SSID_LENGTH        (32)
-#define MAX_PASSWORD_LENGTH    (64)
-#define MAX_TRIGGER_LENGTH     (5)
-#define TRIGGER_PARAM_DECIMALS (2)
+#define MAX_SSID_LENGTH            (32)
+#define MAX_PASSWORD_LENGTH        (64)
+#define MAX_MQTT_SERVERNAME_LENGTH (64)
+#define MAX_MQTT_SENSORID_LENGTH    (8)
+#define MAX_MQTT_USERNAME_LENGTH   (32)
+#define MAX_MQTT_PASSWORD_LENGTH   (32)
 
 char ssid_param[MAX_SSID_LENGTH+1];
 char password_param[MAX_PASSWORD_LENGTH+1];
-float pump_trigger_param; //100.0 - 100.0*WATER_SENSOR_PIN/1023.0. Trigger start of motor
+char mqtt_servername_param[MAX_MQTT_SERVERNAME_LENGTH+1];
+char mqtt_sensorid_param[MAX_MQTT_SENSORID_LENGTH+1];
+char mqtt_username_param[MAX_MQTT_USERNAME_LENGTH+1];
+char mqtt_password_param[MAX_MQTT_PASSWORD_LENGTH+1];
+boolean mqtt_enabled;
 
-
-
-float readAndDeactivateWaterSensor()
-{
-  int value = max(0, min(1023, analogRead(WATERSENSOR_PIN)));
-  digitalWrite(WATERSENSOR_ACTIVATE_PIN, LOW);
-  return 100.0 - 100.0*value/1023.0;
-}
 
 void onTick()
 {
-  switch(state)
+  if (state>=ACTIVATE_FIRST_PLANT_SENSOR && state<=ACTIVATE_LAST_PLANT_SENSOR)
   {
-    case ACTIVATE_LIGHTSENSOR:
-      {
-        digitalWrite(LIGHTSENSOR_ACTIVATE_PIN, HIGH);
-        ticker.attach_ms(LIGHTSENSOR_ACTIVATION_TIME, onTick);
-        state = READ_LIGHTSENSOR;
-        break;
-      }
-    case READ_LIGHTSENSOR:
-      {
-        int value = max(0, min(1023, analogRead(LIGHTSENSOR_PIN)));
-        digitalWrite(LIGHTSENSOR_ACTIVATE_PIN, LOW);
-        lightsensor_value = 100.0 - 100.0*value/1023.0;
-
-        ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-        state = ACTIVATE_WATERSENSOR;
-        break;
-      }
-    case ACTIVATE_WATERSENSOR:
-      {
-        digitalWrite(WATERSENSOR_ACTIVATE_PIN, HIGH);
-        ticker.attach_ms(WATERSENSOR_ACTIVATION_TIME, onTick);
-        state = READ_WATERSENSOR;
-        break;
-      }
-    case READ_WATERSENSOR:
-      {
-        watersensor_value = readAndDeactivateWaterSensor();
-        if (watersensor_value < pump_trigger_param)
+    byte plant = state-ACTIVATE_FIRST_PLANT_SENSOR;
+    digitalWrite(PLANT_SELECT_PINS[plant], HIGH);
+    ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+    state = static_cast<State>(READ_FIRST_PLANT_SENSOR+plant);
+  }
+  else if (state>=READ_FIRST_PLANT_SENSOR && state<=READ_LAST_PLANT_SENSOR)
+  {
+    byte plant = state-READ_FIRST_PLANT_SENSOR;
+    plant_sensor_value[plant] = max(0, min(1023, analogRead(ANALOG_SENSOR_PIN)));
+    digitalWrite(PLANT_SELECT_PINS[plant], LOW);
+    ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+    state = (plant+1)<PLANT_COUNT ? static_cast<State>(ACTIVATE_FIRST_PLANT_SENSOR+plant+1) : DEACTIVATE_PLANT_SENSOR_MODE;
+  }
+  else if (state>=ACTIVATE_FIRST_PLANT_VALVE && state<=ACTIVATE_LAST_PLANT_VALVE)
+  {
+    byte plant = state-ACTIVATE_FIRST_PLANT_VALVE;
+    if (plant_sensor_value[plant] < 500) //TODO
+    {
+      digitalWrite(PLANT_SELECT_PINS[plant], HIGH);
+      plant_valve_open_count[plant]++;
+      ticker.attach_ms(DEFAULT_WATER_VALVE_DURATION, onTick);
+    }
+    else
+    {
+      ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+    }
+    state = static_cast<State>(DEACTIVATE_FIRST_PLANT_VALVE+plant);
+  }
+  else if (state>=DEACTIVATE_FIRST_PLANT_VALVE && state<=DEACTIVATE_LAST_PLANT_VALVE)
+  {
+    byte plant = state-DEACTIVATE_FIRST_PLANT_VALVE;
+    digitalWrite(PLANT_SELECT_PINS[plant], LOW);
+    ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+    state = (plant+1)<PLANT_COUNT ? static_cast<State>(ACTIVATE_FIRST_PLANT_VALVE+plant+1) : DEACTIVATE_PLANT_VALVE_MODE;
+  }
+  else
+  {
+    switch(state)
+    {
+      case START:
         {
-          pump_start_count++;
-          digitalWrite(PUMP_PIN, HIGH);
-          ticker.attach_ms(PUMP_DURATION, onTick);
-          state = STOP_PUMP;
+          digitalWrite(PLANT_SENSOR_MODE_PIN, LOW);
+          digitalWrite(PLANT_VALVE_MODE_PIN, LOW);
+          byte i;
+          for (i=0; i<PLANT_COUNT; i++)
+          {
+            digitalWrite(PLANT_SELECT_PINS[i], LOW);
+          }
+          digitalWrite(LIGHTSENSOR_ACTIVATE_PIN, LOW);
+          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+          state = ACTIVATE_PLANT_SENSOR_MODE;
+          break;
         }
-        else
+  
+      case ACTIVATE_PLANT_SENSOR_MODE:
+        {
+          digitalWrite(PLANT_SENSOR_MODE_PIN, HIGH);
+          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+          state = ACTIVATE_FIRST_PLANT_SENSOR;
+          break;
+        }
+  
+      case DEACTIVATE_PLANT_SENSOR_MODE:
+        {
+          digitalWrite(PLANT_SENSOR_MODE_PIN, LOW);
+          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+          state = ACTIVATE_PLANT_VALVE_MODE;
+          break;
+        }
+  
+      case ACTIVATE_PLANT_VALVE_MODE:
+        {
+          digitalWrite(PLANT_VALVE_MODE_PIN, HIGH);
+          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+          state = ACTIVATE_FIRST_PLANT_VALVE;
+          break;
+        }
+  
+      case DEACTIVATE_PLANT_VALVE_MODE:
+        {
+          digitalWrite(PLANT_VALVE_MODE_PIN, LOW);
+          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+          state = ACTIVATE_LIGHTSENSOR;
+          break;
+        }
+  
+      case ACTIVATE_LIGHTSENSOR:
+        {
+          digitalWrite(LIGHTSENSOR_ACTIVATE_PIN, HIGH);
+          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+          state = READ_LIGHTSENSOR;
+          break;
+        }
+  
+      case READ_LIGHTSENSOR:
+        {
+          int value = max(0, min(1023, analogRead(ANALOG_SENSOR_PIN)));
+          digitalWrite(LIGHTSENSOR_ACTIVATE_PIN, LOW);
+          lightsensor_value = 100.0 - 100.0*value/1023.0;
+  
+          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+          state = ACTIVATE_TEMPHUMIDSENSOR;
+          break;
+        }
+
+      case ACTIVATE_TEMPHUMIDSENSOR:
+        {
+          should_read_temp_sensor = true;
+          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+          state = READ_TEMPHUMIDSENSOR;
+          break;
+        }
+      case READ_TEMPHUMIDSENSOR:
+        {
+          //DHT11 cannot be read in interrupt, so this state is unused (reading is done in main loop)
+          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+          state = FINISHED;
+          break;
+        }
+      case FINISHED:
         {
           ticker.attach_ms(SENSOR_DELAY_TIME, onTick);
-          state = ACTIVATE_LIGHTSENSOR;
+          state = START;
+          break;
         }
-
-        should_read_temp_sensor = true;
-        break;
-      }
-    case STOP_PUMP:
-      {
-        digitalWrite(PUMP_PIN, LOW);
-        ticker.attach_ms(PUMP_IDLE_DELAY_TIME, onTick);
-        state = ACTIVATE_LIGHTSENSOR;
-        break;
-      }
+    }
   }
 }
 
-void read_persistent_string(char* s, int max_length, int& adr)
+void readPersistentString(char* s, int max_length, int& adr)
 {
   int i = 0;
   byte c;
@@ -140,41 +236,28 @@ void read_persistent_string(char* s, int max_length, int& adr)
   s[i] = 0;
 }
 
-void read_persistent_float(float& f, int decimals, int& adr)
-{
-  int i = 0;
-  byte c;
-  do {
-    c = EEPROM.read(adr++);
-    if (c>='0' && c<='9')
-    {
-      i = 10*i + (c-'0');
-    }
-  } while (c!=0);
-
-  f = i;
-  for (i=0; i<decimals; i++)
-  {
-    f = f/10.0f;
-  }
-}
-
-void read_persistent_params()
+void readPersistentParams()
 {
   int adr = 0;
   if (EEPROM_INITIALIZED_MARKER != EEPROM.read(adr++))
   {
     ssid_param[0] = 0;
     password_param[0] = 0;
-    pump_trigger_param = 0.0;
+    mqtt_servername_param[0] = 0;
+    mqtt_sensorid_param[0] = 0;
+    mqtt_username_param[0] = 0;
+    mqtt_password_param[0] = 0;
   } else {
-    read_persistent_string(ssid_param, MAX_SSID_LENGTH, adr);
-    read_persistent_string(password_param, MAX_PASSWORD_LENGTH, adr);
-    read_persistent_float(pump_trigger_param, TRIGGER_PARAM_DECIMALS, adr);
+    readPersistentString(ssid_param, MAX_SSID_LENGTH, adr);
+    readPersistentString(password_param, MAX_PASSWORD_LENGTH, adr);
+    readPersistentString(mqtt_servername_param, MAX_MQTT_SERVERNAME_LENGTH, adr);
+    readPersistentString(mqtt_sensorid_param, MAX_MQTT_SENSORID_LENGTH, adr);
+    readPersistentString(mqtt_username_param, MAX_MQTT_USERNAME_LENGTH, adr);
+    readPersistentString(mqtt_password_param, MAX_MQTT_PASSWORD_LENGTH, adr);
   }
 }
 
-void write_persistent_string(const char* s, size_t max_length, int& adr)
+void writePersistentString(const char* s, size_t max_length, int& adr)
 {
   for (int i=0; i<min(strlen(s), max_length); i++)
   {
@@ -183,76 +266,17 @@ void write_persistent_string(const char* s, size_t max_length, int& adr)
   EEPROM.write(adr++, 0);
 }
 
-void write_persistent_params(const char* ssid, const char* password, float pump_trigger_value)
+void writePersistentParams()
 {
   int adr = 0;
   EEPROM.write(adr++, EEPROM_INITIALIZED_MARKER);
-  write_persistent_string(ssid, MAX_SSID_LENGTH, adr);
-  write_persistent_string(password, MAX_PASSWORD_LENGTH, adr);
-
-  int i;
-  for (i=0; i<TRIGGER_PARAM_DECIMALS; i++)
-  {
-    pump_trigger_value *= 10.0f;
-  }
-  char pump_trigger_strvalue[MAX_TRIGGER_LENGTH+1];
-  int pump_trigger_intvalue = pump_trigger_value;
-  for (i=0; i<MAX_TRIGGER_LENGTH; i++)
-  {
-    pump_trigger_strvalue[MAX_TRIGGER_LENGTH-i-1] = '0'+(pump_trigger_intvalue%10);
-    pump_trigger_intvalue/=10;
-  }
-  pump_trigger_strvalue[MAX_TRIGGER_LENGTH] = 0;
-  write_persistent_string(pump_trigger_strvalue, MAX_TRIGGER_LENGTH, adr);
-
+  writePersistentString(ssid_param, MAX_SSID_LENGTH, adr);
+  writePersistentString(password_param, MAX_PASSWORD_LENGTH, adr);
+  writePersistentString(mqtt_servername_param, MAX_MQTT_SERVERNAME_LENGTH, adr);
+  writePersistentString(mqtt_sensorid_param, MAX_MQTT_SENSORID_LENGTH, adr);
+  writePersistentString(mqtt_username_param, MAX_MQTT_USERNAME_LENGTH, adr);
+  writePersistentString(mqtt_password_param, MAX_MQTT_PASSWORD_LENGTH, adr);
   EEPROM.commit();
-}
-
-void handleCountConfig() {
-  server.send(200, F("text/plain"), F("graph_title MiniDrivhus\n"\
-                                      "graph_args --base 1000 -l 0\n"\
-                                      "graph_vlabel Count\n"\
-                                      "graph_category homeautomation\n"\
-                                      "graph_info Number of times the MiniDrivhus water pump has started.\n"\
-                                      "PUMP.label MiniDrivhus\n"\
-                                      "PUMP.draw LINE2\n"\
-                                      "PUMP.info count\n"));
-}
-
-void handleCountValues() {
-  char msg[20];
-  snprintf(msg, sizeof(msg)/sizeof(msg[0]), "PUMP.value %d\n", pump_start_count);
-  pump_start_count = 0;
-  server.send(200, F("text/plain"), msg);
-}
-
-void handleSensorsConfig() {
-  server.send(200, F("text/plain"), F("graph_title MiniDrivhus\n"\
-                                      "graph_args --base 1000 -l 0\n"\
-                                      "graph_vlabel Value\n"\
-                                      "graph_category homeautomation\n"\
-                                      "graph_info MiniDrivhus sensor values.\n"\
-                                      "WATER.label Water\n"\
-                                      "WATER.draw LINE2\n"\
-                                      "WATER.info value\n"\
-                                      "LIGHT.label Light\n"\
-                                      "LIGHT.draw LINE2\n"\
-                                      "LIGHT.info value\n"\
-                                      "TEMP.label Temperature\n"\
-                                      "TEMP.draw LINE2\n"\
-                                      "TEMP.info C\n"\
-                                      "HUMIDITY.label Humidity\n"\
-                                      "HUMIDITY.draw LINE2\n"\
-                                      "HUMIDITY.info RH\n"));
-}
-
-void handleSensorsValues() {
-  char msg[80];
-  snprintf(msg, sizeof(msg)/sizeof(msg[0]), "WATER.value %0.2f\n"\
-                                            "LIGHT.value %0.2f\n"\
-                                            "TEMP.value %0.2f\n"\
-                                            "HUMIDITY.value %0.2f\n", watersensor_value, lightsensor_value, tempsensor_value, humiditysensor_value);
-  server.send(200, F("text/plain"), msg);
 }
 
 void handleNotFound() {
@@ -260,7 +284,8 @@ void handleNotFound() {
 }
 
 void handleSetupRoot() {
-  if (server.hasArg("ssid") || server.hasArg("password") || server.hasArg("trigger_value"))
+  if (server.hasArg("ssid") || server.hasArg("password")
+      || server.hasArg("mqtt_server") || server.hasArg("mqtt_id") || server.hasArg("mqtt_username") || server.hasArg("mqtt_password"))
   {
     if (server.hasArg("ssid"))
     {
@@ -274,23 +299,35 @@ void handleSetupRoot() {
       password_param[MAX_PASSWORD_LENGTH] = 0;
     }
     
-    if (server.hasArg("trigger_value"))
+    if (server.hasArg("mqtt_server"))
     {
-      pump_trigger_param = server.arg("trigger_value").toFloat();
+      strncpy(mqtt_servername_param, server.arg("mqtt_server").c_str(), MAX_MQTT_SERVERNAME_LENGTH);
+      mqtt_servername_param[MAX_MQTT_SERVERNAME_LENGTH] = 0;
     }
-    
-    write_persistent_params(ssid_param, password_param, pump_trigger_param);
+    if (server.hasArg("mqtt_id"))
+    {
+      strncpy(mqtt_sensorid_param, server.arg("mqtt_id").c_str(), MAX_MQTT_SENSORID_LENGTH);
+      mqtt_sensorid_param[MAX_MQTT_SENSORID_LENGTH] = 0;
+    }
+    if (server.hasArg("mqtt_username"))
+    {
+      strncpy(mqtt_username_param, server.arg("mqtt_username").c_str(), MAX_MQTT_USERNAME_LENGTH);
+      mqtt_username_param[MAX_MQTT_USERNAME_LENGTH] = 0;
+    }
+    if (server.hasArg("mqtt_password") && !server.arg("mqtt_password").equals(F("mqtt_password")))
+    {
+      strncpy(mqtt_password_param, server.arg("mqtt_password").c_str(), MAX_MQTT_PASSWORD_LENGTH);
+      mqtt_password_param[MAX_MQTT_PASSWORD_LENGTH] = 0;
+    }
+
+    writePersistentParams();
 
     server.send(200, F("text/plain"), F("Settings saved"));
   }
   else
   {
-    read_persistent_params();
+    readPersistentParams();
 
-    digitalWrite(WATERSENSOR_ACTIVATE_PIN, HIGH);
-    delay(WATERSENSOR_ACTIVATION_TIME);
-    float current_value = readAndDeactivateWaterSensor();
-    
     String body = F("<!doctype html>"\
                     "<html lang=\"en\">"\
                     "<head>"\
@@ -310,12 +347,25 @@ void handleSetupRoot() {
     body += F("\"/><br/>"\
               "Password:<input type=\"password\" name=\"password\" maxlength=\"");
     body += String(MAX_PASSWORD_LENGTH);
+    body += F("\" value=\"password\"/><br/><hr/>"\
+              "MQTT server:<input type=\"text\" name=\"mqtt_server\" maxlength=\"");
+    body += String(MAX_MQTT_SERVERNAME_LENGTH);
+    body += F("\" value=\"");
+    body += mqtt_servername_param;
+    body += F("\"/><br/>"\
+              "MQTT sensor id:<input type=\"text\" name=\"mqtt_id\" maxlength=\"");
+    body += String(MAX_MQTT_SENSORID_LENGTH);
+    body += F("\" value=\"");
+    body += mqtt_sensorid_param;
+    body += F("\"/><br/>"\
+              "MQTT username:<input type=\"text\" name=\"mqtt_username\" maxlength=\"");
+    body += String(MAX_MQTT_USERNAME_LENGTH);
+    body += F("\" value=\"");
+    body += mqtt_username_param;
+    body += F("\"/><br/>"\
+              "MQTT password:<input type=\"password\" name=\"mqtt_password\" maxlength=\"");
+    body += String(MAX_MQTT_PASSWORD_LENGTH);
     body += F("\" value=\"password\"/><br/>"\
-              "Pump Trigger Value:<input type=\"number\" name=\"trigger_value\" required min=\"0\" max=\"100\" step=\"0.01\" value=\"");
-    body += String(pump_trigger_param, TRIGGER_PARAM_DECIMALS);
-    body += F("\"/> (Current sensor value: ");
-    body += String(current_value, TRIGGER_PARAM_DECIMALS);
-    body += F(")<br/>"\
               "<input type=\"submit\" value=\"Submit\"/>"\
               "</form>"\
              "</body>"\
@@ -324,25 +374,72 @@ void handleSetupRoot() {
   }
 }
 
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+}
+
+void publishMQTTValue(const String& topic, const String& msg)
+{
+  if (mqtt_enabled)
+  {
+    mqtt_client.publish((String(mqtt_sensorid_param)+F("/")+topic).c_str(), msg.c_str());
+  }
+}
+
+void publishMQTTValue(const String& topic, float value)
+{
+  publishMQTTValue(topic, String(value));
+}
+
+void reconnectMQTT() {
+  while (mqtt_enabled && !mqtt_client.connected()) {
+    if (!mqtt_client.connect("ESP8266Client", mqtt_username_param, mqtt_password_param)) {
+      Serial.print("failed, rc=");
+      Serial.print(mqtt_client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+    else if (mqtt_sensorid_param && *mqtt_sensorid_param)
+    {
+//      mqtt_client.subscribe((String(mqtt_sensorid_param)+F("/Heater")).c_str());
+//      mqtt_client.subscribe((String(mqtt_sensorid_param)+F("/Fan")).c_str());
+    }
+  }
+}
+
 void setup()
 {
-  EEPROM.begin(1 + MAX_SSID_LENGTH + 1 + MAX_PASSWORD_LENGTH + 1 + MAX_TRIGGER_LENGTH + 1);
+  EEPROM.begin(1 + MAX_SSID_LENGTH+1 + MAX_PASSWORD_LENGTH+1 + MAX_MQTT_SERVERNAME_LENGTH+1 + MAX_MQTT_SENSORID_LENGTH+1 + MAX_MQTT_USERNAME_LENGTH+1 + MAX_MQTT_PASSWORD_LENGTH+1);
 
-  dht.setup(DHT11_PIN, DHTesp::DHT11);
+  dht.setup(TEMPHUMIDSENSOR_PIN, DHTesp::DHT11);
 
+  byte i;
+  //Prepare pins
   pinMode(SETUP_MODE_PIN, INPUT_PULLUP);
-  pinMode(WATERSENSOR_PIN, INPUT);
-  pinMode(WATERSENSOR_ACTIVATE_PIN, OUTPUT);
-  pinMode(LIGHTSENSOR_PIN, INPUT);
+  pinMode(PLANT_SENSOR_MODE_PIN, OUTPUT);
+  pinMode(PLANT_VALVE_MODE_PIN, OUTPUT);
+  for (i=0; i<PLANT_COUNT; i++)
+  {
+    pinMode(PLANT_SELECT_PINS[i], OUTPUT);
+  }
   pinMode(LIGHTSENSOR_ACTIVATE_PIN, OUTPUT);
-  pinMode(PUMP_PIN, OUTPUT);
+  pinMode(TEMPHUMIDSENSOR_PIN, OUTPUT);
+  pinMode(ANALOG_SENSOR_PIN, INPUT);
 
-  digitalWrite(WATERSENSOR_ACTIVATE_PIN, LOW);
+  //Set output pins
+  digitalWrite(PLANT_SENSOR_MODE_PIN, LOW);
+  digitalWrite(PLANT_VALVE_MODE_PIN, LOW);
+  for (i=0; i<PLANT_COUNT; i++)
+  {
+    digitalWrite(PLANT_SELECT_PINS[i], LOW);
+  }
   digitalWrite(LIGHTSENSOR_ACTIVATE_PIN, LOW);
-  digitalWrite(PUMP_PIN, LOW);
+  digitalWrite(TEMPHUMIDSENSOR_PIN, LOW);
+
 
   if (LOW == digitalRead(SETUP_MODE_PIN))
   {
+    mqtt_enabled = false;
     state = SETUP_MODE;
     WiFi.softAP(SETUP_SSID);
     dnsServer.start(DNS_PORT, "*", apIP);
@@ -352,7 +449,8 @@ void setup()
   }
   else
   {
-    read_persistent_params();
+    readPersistentParams();
+    mqtt_enabled = mqtt_servername_param && *mqtt_servername_param;
     
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid_param, password_param);
@@ -360,20 +458,26 @@ void setup()
       delay(500);
     }
   
-    server.on(F("/count/config"), handleCountConfig);
-    server.on(F("/count/values"), handleCountValues);
-    server.on(F("/sensors/config"), handleSensorsConfig);
-    server.on(F("/sensors/values"), handleSensorsValues);
     server.onNotFound(handleNotFound);
     server.begin();
   
-    state = ACTIVATE_LIGHTSENSOR;
-    watersensor_value = 0.0;
+    if (mqtt_enabled)
+    {
+      mqtt_client.setServer(mqtt_servername_param, 1883);
+      mqtt_client.setCallback(mqttCallback);
+      reconnectMQTT();
+    }
+
+    byte i;
+    for (i=0; i<PLANT_COUNT; i++)
+    {
+      plant_sensor_value[i] = plant_valve_open_count[i] = 0;
+    }
     lightsensor_value = 0.0;
     tempsensor_value = 0.0;
     humiditysensor_value = 0.0;
-    pump_start_count = 0;
     should_read_temp_sensor = false;
+    state = START;
     onTick();
   }
 }
@@ -382,6 +486,16 @@ void loop()
 {
   if (state == SETUP_MODE) {
       dnsServer.processNextRequest();
+  }
+  else
+  {
+    if (mqtt_enabled)
+    {
+      if (!mqtt_client.connected()) {
+        reconnectMQTT();
+      }
+      mqtt_client.loop();
+    }
   }
 
   server.handleClient();
