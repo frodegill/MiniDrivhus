@@ -6,7 +6,20 @@
 #include <PubSubClient.h>
 #include <Ticker.h>
 
-// PCB v2
+/* PCB v2
+
+ MQTT paths:
+ /minidrivhus/<sensorid>/light
+ /minidrivhus/<sensorid>/temp
+ /minidrivhus/<sensorid>/humidity
+ /minidrivhus/<sensorid>/plant[1..n]/moisture
+ /minidrivhus/<sensorid>/plant[1..n]/valve_open_count
+ /minidrivhus/<sensorid>/config/sec_between_reading
+ /minidrivhus/<sensorid>/config/plant_count
+ /minidrivhus/<sensorid>/config/plant[1..n]/valve_trigger_value
+ /minidrivhus/<sensorid>/config/plant[1..n]/valve_open_ms
+ /minidrivhus/<sensorid>/config/plant[1..n]/sec_valve_grace_period
+ */
 
 static const char* SETUP_SSID = "sensor-setup";
 static const byte EEPROM_INITIALIZED_MARKER = 0xF1; //Just a magic number
@@ -19,29 +32,32 @@ static const byte LIGHTSENSOR_ACTIVATE_PIN = D10;
 static const byte TEMPHUMIDSENSOR_PIN      = D2;
 static const byte ANALOG_SENSOR_PIN        = A0;
 
-static const byte PLANT_COUNT = sizeof(PLANT_SELECT_PINS)/sizeof(PLANT_SELECT_PINS[0]);
+static const byte MAX_PLANT_COUNT = sizeof(PLANT_SELECT_PINS)/sizeof(PLANT_SELECT_PINS[0]);
 
-static const byte DELAY_BETWEEN_ACTIVE_SENSORS = 25;     //ms between activating sensors
-static const byte DEFAULT_WATER_VALVE_DURATION        = 5*1000; //ms to keep valve open
-static const byte DEFAULT_WATER_VALVE_IDLE_DELAY_TIME = 20*60*1000; //ms min. time between pump trigger
-static const byte SENSOR_DELAY_TIME            = 5*1000; //ms min. time between sensor activation
+static const byte DELAY_BETWEEN_ACTIVE_SENSORS     = 25; //ms between activating sensors
+static const byte DEFAULT_CONF_SEC_BETWEEN_READING = 5; //secoonds min. time between sensor activation
+static const byte DEFAULT_CONF_VALVE_TRIGGER_VALUE = 50; //[0..100]
+static const byte DEFAULT_CONF_VALVE_OPEN_MS       = 5*1000; //ms to keep valve open
+static const byte DEFAULT_CONF_VALVE_SEC_GRACE_PERIOD = 20*60; //sec min. time between valve open
 
+static const byte OLD = 0;
+static const byte CURRENT = 1;
 
 enum State {
   SETUP_MODE,
   START,
   ACTIVATE_PLANT_SENSOR_MODE,
   ACTIVATE_FIRST_PLANT_SENSOR,
-  ACTIVATE_LAST_PLANT_SENSOR = ACTIVATE_FIRST_PLANT_SENSOR + (PLANT_COUNT-1),
+  ACTIVATE_LAST_PLANT_SENSOR = ACTIVATE_FIRST_PLANT_SENSOR + (MAX_PLANT_COUNT-1),
   READ_FIRST_PLANT_SENSOR,
-  READ_LAST_PLANT_SENSOR = READ_FIRST_PLANT_SENSOR + (PLANT_COUNT-1),
+  READ_LAST_PLANT_SENSOR = READ_FIRST_PLANT_SENSOR + (MAX_PLANT_COUNT-1),
   DEACTIVATE_PLANT_SENSOR_MODE,
 
   ACTIVATE_PLANT_VALVE_MODE,
   ACTIVATE_FIRST_PLANT_VALVE,
-  ACTIVATE_LAST_PLANT_VALVE = ACTIVATE_FIRST_PLANT_VALVE + (PLANT_COUNT-1),
+  ACTIVATE_LAST_PLANT_VALVE = ACTIVATE_FIRST_PLANT_VALVE + (MAX_PLANT_COUNT-1),
   DEACTIVATE_FIRST_PLANT_VALVE,
-  DEACTIVATE_LAST_PLANT_VALVE = DEACTIVATE_FIRST_PLANT_VALVE + (PLANT_COUNT-1),
+  DEACTIVATE_LAST_PLANT_VALVE = DEACTIVATE_FIRST_PLANT_VALVE + (MAX_PLANT_COUNT-1),
   DEACTIVATE_PLANT_VALVE_MODE,
 
   ACTIVATE_LIGHTSENSOR,
@@ -67,11 +83,18 @@ Ticker ticker;
 volatile State state;
 volatile bool should_read_temp_sensor;
 
-volatile uint16_t plant_sensor_value[PLANT_COUNT];
-volatile uint16_t plant_valve_open_count[PLANT_COUNT];
-volatile float lightsensor_value;
-float tempsensor_value;
-float humiditysensor_value;
+volatile uint16_t plant_sensor_value[2][MAX_PLANT_COUNT];
+volatile uint16_t plant_valve_open_count[2][MAX_PLANT_COUNT];
+volatile float lightsensor_value[2];
+float tempsensor_value[2];
+float humiditysensor_value[2];
+
+unsigned int conf_sec_between_reading;
+byte conf_plant_count = MAX_PLANT_COUNT;
+byte conf_valve_trigger_value[MAX_PLANT_COUNT];
+unsigned int conf_valve_open_ms[MAX_PLANT_COUNT];
+unsigned int conf_valve_sec_grace_period[MAX_PLANT_COUNT];
+
 
 #define MAX_SSID_LENGTH            (32)
 #define MAX_PASSWORD_LENGTH        (64)
@@ -87,7 +110,7 @@ char mqtt_sensorid_param[MAX_MQTT_SENSORID_LENGTH+1];
 char mqtt_username_param[MAX_MQTT_USERNAME_LENGTH+1];
 char mqtt_password_param[MAX_MQTT_PASSWORD_LENGTH+1];
 boolean mqtt_enabled;
-
+String mqtt_path_prefix;
 
 void onTick()
 {
@@ -101,19 +124,20 @@ void onTick()
   else if (state>=READ_FIRST_PLANT_SENSOR && state<=READ_LAST_PLANT_SENSOR)
   {
     byte plant = state-READ_FIRST_PLANT_SENSOR;
-    plant_sensor_value[plant] = max(0, min(1023, analogRead(ANALOG_SENSOR_PIN)));
+    plant_sensor_value[CURRENT][plant] = max(0, min(1023, analogRead(ANALOG_SENSOR_PIN)));
     digitalWrite(PLANT_SELECT_PINS[plant], LOW);
     ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-    state = (plant+1)<PLANT_COUNT ? static_cast<State>(ACTIVATE_FIRST_PLANT_SENSOR+plant+1) : DEACTIVATE_PLANT_SENSOR_MODE;
+    state = (plant+1)<conf_plant_count ? static_cast<State>(ACTIVATE_FIRST_PLANT_SENSOR+plant+1) : DEACTIVATE_PLANT_SENSOR_MODE;
   }
   else if (state>=ACTIVATE_FIRST_PLANT_VALVE && state<=ACTIVATE_LAST_PLANT_VALVE)
   {
     byte plant = state-ACTIVATE_FIRST_PLANT_VALVE;
-    if (plant_sensor_value[plant] < 500) //TODO
+    byte sensor_percent_value = (plant_sensor_value[CURRENT][plant]*100)/1023;
+    if (sensor_percent_value < plant_sensor_value[CURRENT][plant])
     {
       digitalWrite(PLANT_SELECT_PINS[plant], HIGH);
-      plant_valve_open_count[plant]++;
-      ticker.attach_ms(DEFAULT_WATER_VALVE_DURATION, onTick);
+      plant_valve_open_count[CURRENT][plant]++;
+      ticker.attach_ms(conf_valve_open_ms[plant], onTick);
     }
     else
     {
@@ -126,7 +150,7 @@ void onTick()
     byte plant = state-DEACTIVATE_FIRST_PLANT_VALVE;
     digitalWrite(PLANT_SELECT_PINS[plant], LOW);
     ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-    state = (plant+1)<PLANT_COUNT ? static_cast<State>(ACTIVATE_FIRST_PLANT_VALVE+plant+1) : DEACTIVATE_PLANT_VALVE_MODE;
+    state = (plant+1)<conf_plant_count ? static_cast<State>(ACTIVATE_FIRST_PLANT_VALVE+plant+1) : DEACTIVATE_PLANT_VALVE_MODE;
   }
   else
   {
@@ -137,7 +161,7 @@ void onTick()
           digitalWrite(PLANT_SENSOR_MODE_PIN, LOW);
           digitalWrite(PLANT_VALVE_MODE_PIN, LOW);
           byte i;
-          for (i=0; i<PLANT_COUNT; i++)
+          for (i=0; i<MAX_PLANT_COUNT; i++)
           {
             digitalWrite(PLANT_SELECT_PINS[i], LOW);
           }
@@ -191,7 +215,7 @@ void onTick()
         {
           int value = max(0, min(1023, analogRead(ANALOG_SENSOR_PIN)));
           digitalWrite(LIGHTSENSOR_ACTIVATE_PIN, LOW);
-          lightsensor_value = 100.0 - 100.0*value/1023.0;
+          lightsensor_value[CURRENT] = 100.0 - 100.0*value/1023.0;
   
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
           state = ACTIVATE_TEMPHUMIDSENSOR;
@@ -214,7 +238,7 @@ void onTick()
         }
       case FINISHED:
         {
-          ticker.attach_ms(SENSOR_DELAY_TIME, onTick);
+          ticker.attach_ms(conf_sec_between_reading*1000, onTick);
           state = START;
           break;
         }
@@ -375,6 +399,46 @@ void handleSetupRoot() {
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  if (0 != strncmp(mqtt_path_prefix.c_str(), topic, mqtt_path_prefix.length()))
+  {
+    return;
+  }
+
+  const char* key = topic + mqtt_path_prefix.length();
+
+  if (0 == strcmp("config/sec_between_reading", key))
+  {
+    conf_sec_between_reading = max(1, atoi(reinterpret_cast<const char*>(payload)));
+  }
+  else if (0 == strcmp("config/plant_count", key))
+  {
+    conf_plant_count = min(static_cast<const int>(MAX_PLANT_COUNT), max(1, atoi(reinterpret_cast<const char*>(payload))));
+  }
+  else if (0 == strncmp("config/plant", key, 12))
+  {
+    key += 12;
+    byte plantno = 0;
+    while (*key>='0' && *key<='9')
+    {
+      plantno = plantno*10 + (*key++-'0');
+    }
+
+    if (plantno <= MAX_PLANT_COUNT && *key++=='/')
+    {
+      if (0 == strcmp("valve_trigger_value", key))
+      {
+        conf_valve_trigger_value[plantno] = min(100, max(0, atoi(reinterpret_cast<const char*>(payload))));
+      }
+      else if (0 == strcmp("valve_open_ms", key))
+      {
+        conf_valve_open_ms[plantno] = max(1, atoi(reinterpret_cast<const char*>(payload)));
+      }
+      else if (0 == strcmp("sec_valve_grace_period", key))
+      {
+        conf_valve_sec_grace_period[plantno] = max(1, atoi(reinterpret_cast<const char*>(payload)));
+      }
+    }
+  }
 }
 
 void publishMQTTValue(const String& topic, const String& msg)
@@ -392,17 +456,27 @@ void publishMQTTValue(const String& topic, float value)
 
 void reconnectMQTT() {
   while (mqtt_enabled && !mqtt_client.connected()) {
-    if (!mqtt_client.connect("ESP8266Client", mqtt_username_param, mqtt_password_param)) {
+    if (mqtt_client.connect("ESP8266Client", mqtt_username_param, mqtt_password_param)) {
+      mqtt_client.subscribe((mqtt_path_prefix+F("config/sec_between_reading")).c_str());
+      mqtt_client.subscribe((mqtt_path_prefix+F("config/plant_count")).c_str());
+      byte i;
+      for (i=0; i<MAX_PLANT_COUNT; i++)
+      {
+        String plant = F("plant");
+        plant += String(i);
+        plant += F("/");
+        
+        mqtt_client.subscribe((mqtt_path_prefix+plant+F("valve_trigger_value")).c_str());
+        mqtt_client.subscribe((mqtt_path_prefix+plant+F("valve_open_ms")).c_str());
+      }
+    }
+    else
+    {
       Serial.print("failed, rc=");
       Serial.print(mqtt_client.state());
       Serial.println(" try again in 5 seconds");
       // Wait 5 seconds before retrying
       delay(5000);
-    }
-    else if (mqtt_sensorid_param && *mqtt_sensorid_param)
-    {
-//      mqtt_client.subscribe((String(mqtt_sensorid_param)+F("/Heater")).c_str());
-//      mqtt_client.subscribe((String(mqtt_sensorid_param)+F("/Fan")).c_str());
     }
   }
 }
@@ -418,7 +492,7 @@ void setup()
   pinMode(SETUP_MODE_PIN, INPUT_PULLUP);
   pinMode(PLANT_SENSOR_MODE_PIN, OUTPUT);
   pinMode(PLANT_VALVE_MODE_PIN, OUTPUT);
-  for (i=0; i<PLANT_COUNT; i++)
+  for (i=0; i<MAX_PLANT_COUNT; i++)
   {
     pinMode(PLANT_SELECT_PINS[i], OUTPUT);
   }
@@ -429,7 +503,7 @@ void setup()
   //Set output pins
   digitalWrite(PLANT_SENSOR_MODE_PIN, LOW);
   digitalWrite(PLANT_VALVE_MODE_PIN, LOW);
-  for (i=0; i<PLANT_COUNT; i++)
+  for (i=0; i<MAX_PLANT_COUNT; i++)
   {
     digitalWrite(PLANT_SELECT_PINS[i], LOW);
   }
@@ -449,8 +523,28 @@ void setup()
   }
   else
   {
+    conf_sec_between_reading = DEFAULT_CONF_SEC_BETWEEN_READING;
+    byte i;
+    for (i=0; i<MAX_PLANT_COUNT; i++)
+    {
+      plant_sensor_value[CURRENT][i] = plant_sensor_value[OLD][i] = 0;
+      plant_valve_open_count[CURRENT][i] = plant_valve_open_count[OLD][i] = 0;
+      conf_valve_trigger_value[i] = DEFAULT_CONF_VALVE_TRIGGER_VALUE;
+      conf_valve_open_ms[i] = DEFAULT_CONF_VALVE_OPEN_MS;
+      conf_valve_sec_grace_period[i] = DEFAULT_CONF_VALVE_SEC_GRACE_PERIOD;
+
+    }
+    lightsensor_value[CURRENT] = lightsensor_value[OLD] = 0.0;
+    tempsensor_value[CURRENT] = tempsensor_value[OLD] = 0.0;
+    humiditysensor_value[CURRENT] = humiditysensor_value[OLD] = 0.0;
+    should_read_temp_sensor = false;
+
     readPersistentParams();
-    mqtt_enabled = mqtt_servername_param && *mqtt_servername_param;
+    
+    mqtt_enabled = mqtt_servername_param && *mqtt_servername_param && mqtt_sensorid_param && *mqtt_sensorid_param;
+    mqtt_path_prefix = F("minidrivhus/");
+    mqtt_path_prefix += mqtt_sensorid_param;
+    mqtt_path_prefix += F("/");
     
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid_param, password_param);
@@ -468,15 +562,6 @@ void setup()
       reconnectMQTT();
     }
 
-    byte i;
-    for (i=0; i<PLANT_COUNT; i++)
-    {
-      plant_sensor_value[i] = plant_valve_open_count[i] = 0;
-    }
-    lightsensor_value = 0.0;
-    tempsensor_value = 0.0;
-    humiditysensor_value = 0.0;
-    should_read_temp_sensor = false;
     state = START;
     onTick();
   }
@@ -507,8 +592,8 @@ void loop()
     TempAndHumidity temp_and_humidity = dht.getTempAndHumidity();
     if (dht.getStatus() == DHTesp::ERROR_NONE)
     {
-      tempsensor_value = temp_and_humidity.temperature;
-      humiditysensor_value = temp_and_humidity.humidity;
+      tempsensor_value[CURRENT] = temp_and_humidity.temperature;
+      humiditysensor_value[CURRENT] = temp_and_humidity.humidity;
     }
   }
 }
