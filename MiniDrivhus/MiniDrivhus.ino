@@ -6,7 +6,7 @@
 #include <PubSubClient.h>
 #include <Ticker.h>
 
-/* PCB v2
+/* PCB v2 for WeMos D1 R1
 
  MQTT paths:
  /minidrivhus/<sensorid>/light
@@ -22,17 +22,22 @@
  */
 
 static const char* SETUP_SSID = "sensor-setup";
-static const byte EEPROM_INITIALIZED_MARKER = 0xF1; //Just a magic number
+static const byte EEPROM_INITIALIZED_MARKER = 0xF2; //Just a magic number
 
-static const byte SETUP_MODE_PIN           = D9;
-static const byte PLANT_SENSOR_MODE_PIN    = D8;
-static const byte PLANT_VALVE_MODE_PIN     = D4;
-static const byte PLANT_SELECT_PINS[]      = {D3, D6, D7, D5};
-static const byte LIGHTSENSOR_ACTIVATE_PIN = D10;
-static const byte TEMPHUMIDSENSOR_PIN      = D2;
-static const byte ANALOG_SENSOR_PIN        = A0;
+static const byte BUILTIN_LED_PIN = D9;
+static const byte BUILTIN_LED_OFF = HIGH;
 
-static const byte MAX_PLANT_COUNT = sizeof(PLANT_SELECT_PINS)/sizeof(PLANT_SELECT_PINS[0]);
+// D5 = Board LED, D9 = Built in LED (HIGH == ON), D8 & D9 Pull-up, D10 pull-down
+static const byte I_SETUP_MODE_PIN           = D0; //Uses internal pull-up
+static const byte I_TEMPHUMIDSENSOR_PIN      = D1;
+static const byte O_LIGHT_RELAY_ACTIVATE_PIN = D2;
+static const byte O_LIGHTSENSOR_ACTIVATE_PIN = D3;
+static const byte O_PLANT_VALVE_MODE_PIN     = D4;
+static const byte O_PLANT_SENSOR_MODE_PIN    = D5;
+static const byte O_PLANT_SELECT_PINS[]      = {D6, D7, D8, D10, BUILTIN_LED_PIN};
+static const byte I_ANALOG_SENSOR_PIN        = A0;
+
+static const byte MAX_PLANT_COUNT = sizeof(O_PLANT_SELECT_PINS)/sizeof(O_PLANT_SELECT_PINS[0]);
 
 static const byte DELAY_BETWEEN_ACTIVE_SENSORS     = 25; //ms between activating sensors
 static const byte DEFAULT_CONF_SEC_BETWEEN_READING = 5; //secoonds min. time between sensor activation
@@ -73,6 +78,7 @@ ESP8266WebServer server(80);
 
 WiFiClient esp_client;
 PubSubClient mqtt_client(esp_client);
+static const uint16_t MQTT_DEFAULT_PORT = 1883;
 
 DNSServer dnsServer;
 static const byte DNS_PORT = 53;
@@ -99,13 +105,15 @@ unsigned int conf_valve_sec_grace_period[MAX_PLANT_COUNT];
 #define MAX_SSID_LENGTH            (32)
 #define MAX_PASSWORD_LENGTH        (64)
 #define MAX_MQTT_SERVERNAME_LENGTH (64)
-#define MAX_MQTT_SENSORID_LENGTH    (8)
+#define MAX_MQTT_SERVERPORT_LENGTH  (5)
+#define MAX_MQTT_SENSORID_LENGTH   (16)
 #define MAX_MQTT_USERNAME_LENGTH   (32)
 #define MAX_MQTT_PASSWORD_LENGTH   (32)
 
 char ssid_param[MAX_SSID_LENGTH+1];
 char password_param[MAX_PASSWORD_LENGTH+1];
 char mqtt_servername_param[MAX_MQTT_SERVERNAME_LENGTH+1];
+uint16_t mqtt_serverport_param = MQTT_DEFAULT_PORT;
 char mqtt_sensorid_param[MAX_MQTT_SENSORID_LENGTH+1];
 char mqtt_username_param[MAX_MQTT_USERNAME_LENGTH+1];
 char mqtt_password_param[MAX_MQTT_PASSWORD_LENGTH+1];
@@ -117,15 +125,15 @@ void onTick()
   if (state>=ACTIVATE_FIRST_PLANT_SENSOR && state<=ACTIVATE_LAST_PLANT_SENSOR)
   {
     byte plant = state-ACTIVATE_FIRST_PLANT_SENSOR;
-    digitalWrite(PLANT_SELECT_PINS[plant], HIGH);
+    digitalWrite(O_PLANT_SELECT_PINS[plant], HIGH);
     ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
     state = static_cast<State>(READ_FIRST_PLANT_SENSOR+plant);
   }
   else if (state>=READ_FIRST_PLANT_SENSOR && state<=READ_LAST_PLANT_SENSOR)
   {
     byte plant = state-READ_FIRST_PLANT_SENSOR;
-    plant_sensor_value[CURRENT][plant] = max(0, min(1023, analogRead(ANALOG_SENSOR_PIN)));
-    digitalWrite(PLANT_SELECT_PINS[plant], LOW);
+    plant_sensor_value[CURRENT][plant] = max(0, min(1023, analogRead(I_ANALOG_SENSOR_PIN)));
+    digitalWrite(O_PLANT_SELECT_PINS[plant], LOW);
     ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
     state = (plant+1)<conf_plant_count ? static_cast<State>(ACTIVATE_FIRST_PLANT_SENSOR+plant+1) : DEACTIVATE_PLANT_SENSOR_MODE;
   }
@@ -135,7 +143,7 @@ void onTick()
     byte sensor_percent_value = (plant_sensor_value[CURRENT][plant]*100)/1023;
     if (sensor_percent_value < plant_sensor_value[CURRENT][plant])
     {
-      digitalWrite(PLANT_SELECT_PINS[plant], HIGH);
+      digitalWrite(O_PLANT_SELECT_PINS[plant], HIGH);
       plant_valve_open_count[CURRENT][plant]++;
       ticker.attach_ms(conf_valve_open_ms[plant], onTick);
     }
@@ -148,7 +156,7 @@ void onTick()
   else if (state>=DEACTIVATE_FIRST_PLANT_VALVE && state<=DEACTIVATE_LAST_PLANT_VALVE)
   {
     byte plant = state-DEACTIVATE_FIRST_PLANT_VALVE;
-    digitalWrite(PLANT_SELECT_PINS[plant], LOW);
+    digitalWrite(O_PLANT_SELECT_PINS[plant], LOW);
     ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
     state = (plant+1)<conf_plant_count ? static_cast<State>(ACTIVATE_FIRST_PLANT_VALVE+plant+1) : DEACTIVATE_PLANT_VALVE_MODE;
   }
@@ -158,14 +166,14 @@ void onTick()
     {
       case START:
         {
-          digitalWrite(PLANT_SENSOR_MODE_PIN, LOW);
-          digitalWrite(PLANT_VALVE_MODE_PIN, LOW);
+          digitalWrite(O_PLANT_SENSOR_MODE_PIN, LOW);
+          digitalWrite(O_PLANT_VALVE_MODE_PIN, LOW);
           byte i;
-          for (i=0; i<MAX_PLANT_COUNT; i++)
+          for (i=0; i<conf_plant_count; i++)
           {
-            digitalWrite(PLANT_SELECT_PINS[i], LOW);
+            digitalWrite(O_PLANT_SELECT_PINS[i], LOW);
           }
-          digitalWrite(LIGHTSENSOR_ACTIVATE_PIN, LOW);
+          digitalWrite(O_LIGHTSENSOR_ACTIVATE_PIN, LOW);
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
           state = ACTIVATE_PLANT_SENSOR_MODE;
           break;
@@ -173,7 +181,7 @@ void onTick()
   
       case ACTIVATE_PLANT_SENSOR_MODE:
         {
-          digitalWrite(PLANT_SENSOR_MODE_PIN, HIGH);
+          digitalWrite(O_PLANT_SENSOR_MODE_PIN, HIGH);
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
           state = ACTIVATE_FIRST_PLANT_SENSOR;
           break;
@@ -181,7 +189,7 @@ void onTick()
   
       case DEACTIVATE_PLANT_SENSOR_MODE:
         {
-          digitalWrite(PLANT_SENSOR_MODE_PIN, LOW);
+          digitalWrite(O_PLANT_SENSOR_MODE_PIN, LOW);
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
           state = ACTIVATE_PLANT_VALVE_MODE;
           break;
@@ -189,7 +197,7 @@ void onTick()
   
       case ACTIVATE_PLANT_VALVE_MODE:
         {
-          digitalWrite(PLANT_VALVE_MODE_PIN, HIGH);
+          digitalWrite(O_PLANT_VALVE_MODE_PIN, HIGH);
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
           state = ACTIVATE_FIRST_PLANT_VALVE;
           break;
@@ -197,7 +205,7 @@ void onTick()
   
       case DEACTIVATE_PLANT_VALVE_MODE:
         {
-          digitalWrite(PLANT_VALVE_MODE_PIN, LOW);
+          digitalWrite(O_PLANT_VALVE_MODE_PIN, LOW);
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
           state = ACTIVATE_LIGHTSENSOR;
           break;
@@ -205,7 +213,7 @@ void onTick()
   
       case ACTIVATE_LIGHTSENSOR:
         {
-          digitalWrite(LIGHTSENSOR_ACTIVATE_PIN, HIGH);
+          digitalWrite(O_LIGHTSENSOR_ACTIVATE_PIN, HIGH);
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
           state = READ_LIGHTSENSOR;
           break;
@@ -213,8 +221,8 @@ void onTick()
   
       case READ_LIGHTSENSOR:
         {
-          int value = max(0, min(1023, analogRead(ANALOG_SENSOR_PIN)));
-          digitalWrite(LIGHTSENSOR_ACTIVATE_PIN, LOW);
+          int value = max(0, min(1023, analogRead(I_ANALOG_SENSOR_PIN)));
+          digitalWrite(O_LIGHTSENSOR_ACTIVATE_PIN, LOW);
           lightsensor_value[CURRENT] = 100.0 - 100.0*value/1023.0;
   
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
@@ -268,6 +276,7 @@ void readPersistentParams()
     ssid_param[0] = 0;
     password_param[0] = 0;
     mqtt_servername_param[0] = 0;
+    mqtt_serverport_param = MQTT_DEFAULT_PORT;
     mqtt_sensorid_param[0] = 0;
     mqtt_username_param[0] = 0;
     mqtt_password_param[0] = 0;
@@ -275,6 +284,11 @@ void readPersistentParams()
     readPersistentString(ssid_param, MAX_SSID_LENGTH, adr);
     readPersistentString(password_param, MAX_PASSWORD_LENGTH, adr);
     readPersistentString(mqtt_servername_param, MAX_MQTT_SERVERNAME_LENGTH, adr);
+
+    char port[MAX_MQTT_SERVERPORT_LENGTH+1];
+    readPersistentString(port, MAX_MQTT_SERVERPORT_LENGTH, adr);
+    mqtt_serverport_param = atoi(port)&0xFFFF;
+
     readPersistentString(mqtt_sensorid_param, MAX_MQTT_SENSORID_LENGTH, adr);
     readPersistentString(mqtt_username_param, MAX_MQTT_USERNAME_LENGTH, adr);
     readPersistentString(mqtt_password_param, MAX_MQTT_PASSWORD_LENGTH, adr);
@@ -297,6 +311,12 @@ void writePersistentParams()
   writePersistentString(ssid_param, MAX_SSID_LENGTH, adr);
   writePersistentString(password_param, MAX_PASSWORD_LENGTH, adr);
   writePersistentString(mqtt_servername_param, MAX_MQTT_SERVERNAME_LENGTH, adr);
+
+  char port[MAX_MQTT_SERVERPORT_LENGTH+1];
+  sprintf(port, "%hu", mqtt_serverport_param);
+  port[MAX_MQTT_SERVERPORT_LENGTH] = 0;
+  writePersistentString(port, MAX_MQTT_SERVERPORT_LENGTH, adr);
+  
   writePersistentString(mqtt_sensorid_param, MAX_MQTT_SENSORID_LENGTH, adr);
   writePersistentString(mqtt_username_param, MAX_MQTT_USERNAME_LENGTH, adr);
   writePersistentString(mqtt_password_param, MAX_MQTT_PASSWORD_LENGTH, adr);
@@ -309,7 +329,7 @@ void handleNotFound() {
 
 void handleSetupRoot() {
   if (server.hasArg("ssid") || server.hasArg("password")
-      || server.hasArg("mqtt_server") || server.hasArg("mqtt_id") || server.hasArg("mqtt_username") || server.hasArg("mqtt_password"))
+      || server.hasArg("mqtt_server") || server.hasArg("mqtt_port") || server.hasArg("mqtt_id") || server.hasArg("mqtt_username") || server.hasArg("mqtt_password"))
   {
     if (server.hasArg("ssid"))
     {
@@ -327,6 +347,10 @@ void handleSetupRoot() {
     {
       strncpy(mqtt_servername_param, server.arg("mqtt_server").c_str(), MAX_MQTT_SERVERNAME_LENGTH);
       mqtt_servername_param[MAX_MQTT_SERVERNAME_LENGTH] = 0;
+    }
+    if (server.hasArg("mqtt_port"))
+    {
+      mqtt_serverport_param = server.arg("mqtt_port").toInt()&0xFFFF;
     }
     if (server.hasArg("mqtt_id"))
     {
@@ -376,6 +400,8 @@ void handleSetupRoot() {
     body += String(MAX_MQTT_SERVERNAME_LENGTH);
     body += F("\" value=\"");
     body += mqtt_servername_param;
+    body += F("\"/>MQTT port:<input type=\"number\" name=\"mqtt_port\" min=\"0\" max=\"65535\" value=\"");
+    body += String(mqtt_serverport_param);
     body += F("\"/><br/>"\
               "MQTT sensor id:<input type=\"text\" name=\"mqtt_id\" maxlength=\"");
     body += String(MAX_MQTT_SENSORID_LENGTH);
@@ -413,6 +439,20 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   else if (0 == strcmp("config/plant_count", key))
   {
     conf_plant_count = min(static_cast<const int>(MAX_PLANT_COUNT), max(1, atoi(reinterpret_cast<const char*>(payload))));
+    if (conf_plant_count < MAX_PLANT_COUNT)
+    {
+      //Deactivate all unused plants and turn off builtin LED
+      byte i;
+      for (i=conf_plant_count; i<MAX_PLANT_COUNT-1; i++)
+      {
+        digitalWrite(O_PLANT_SELECT_PINS[i], LOW);
+      }
+      digitalWrite(BUILTIN_LED_PIN, BUILTIN_LED_OFF);
+    }
+    else
+    {
+      digitalWrite(O_PLANT_SELECT_PINS[MAX_PLANT_COUNT-1], LOW);
+    }
   }
   else if (0 == strncmp("config/plant", key, 12))
   {
@@ -472,9 +512,6 @@ void reconnectMQTT() {
     }
     else
     {
-      Serial.print("failed, rc=");
-      Serial.print(mqtt_client.state());
-      Serial.println(" try again in 5 seconds");
       // Wait 5 seconds before retrying
       delay(5000);
     }
@@ -483,35 +520,14 @@ void reconnectMQTT() {
 
 void setup()
 {
+  Serial.end();
+  Serial1.end();
+  
   EEPROM.begin(1 + MAX_SSID_LENGTH+1 + MAX_PASSWORD_LENGTH+1 + MAX_MQTT_SERVERNAME_LENGTH+1 + MAX_MQTT_SENSORID_LENGTH+1 + MAX_MQTT_USERNAME_LENGTH+1 + MAX_MQTT_PASSWORD_LENGTH+1);
 
-  dht.setup(TEMPHUMIDSENSOR_PIN, DHTesp::DHT11);
-
-  byte i;
-  //Prepare pins
-  pinMode(SETUP_MODE_PIN, INPUT_PULLUP);
-  pinMode(PLANT_SENSOR_MODE_PIN, OUTPUT);
-  pinMode(PLANT_VALVE_MODE_PIN, OUTPUT);
-  for (i=0; i<MAX_PLANT_COUNT; i++)
-  {
-    pinMode(PLANT_SELECT_PINS[i], OUTPUT);
-  }
-  pinMode(LIGHTSENSOR_ACTIVATE_PIN, OUTPUT);
-  pinMode(TEMPHUMIDSENSOR_PIN, OUTPUT);
-  pinMode(ANALOG_SENSOR_PIN, INPUT);
-
-  //Set output pins
-  digitalWrite(PLANT_SENSOR_MODE_PIN, LOW);
-  digitalWrite(PLANT_VALVE_MODE_PIN, LOW);
-  for (i=0; i<MAX_PLANT_COUNT; i++)
-  {
-    digitalWrite(PLANT_SELECT_PINS[i], LOW);
-  }
-  digitalWrite(LIGHTSENSOR_ACTIVATE_PIN, LOW);
-  digitalWrite(TEMPHUMIDSENSOR_PIN, LOW);
-
-
-  if (LOW == digitalRead(SETUP_MODE_PIN))
+  pinMode(I_SETUP_MODE_PIN, INPUT_PULLUP);
+  delay(100);
+  if (LOW == digitalRead(I_SETUP_MODE_PIN))
   {
     mqtt_enabled = false;
     state = SETUP_MODE;
@@ -523,8 +539,31 @@ void setup()
   }
   else
   {
-    conf_sec_between_reading = DEFAULT_CONF_SEC_BETWEEN_READING;
+    dht.setup(I_TEMPHUMIDSENSOR_PIN, DHTesp::DHT11);
+
+    //Prepare pins
     byte i;
+    pinMode(O_PLANT_SENSOR_MODE_PIN, OUTPUT);
+    pinMode(O_PLANT_VALVE_MODE_PIN, OUTPUT);
+    for (i=0; i<MAX_PLANT_COUNT; i++)
+    {
+      pinMode(O_PLANT_SELECT_PINS[i], OUTPUT);
+    }
+    pinMode(O_LIGHTSENSOR_ACTIVATE_PIN, OUTPUT);
+    pinMode(I_TEMPHUMIDSENSOR_PIN, OUTPUT);
+    pinMode(I_ANALOG_SENSOR_PIN, INPUT);
+
+    //Set output pins
+    digitalWrite(O_PLANT_SENSOR_MODE_PIN, LOW);
+    digitalWrite(O_PLANT_VALVE_MODE_PIN, LOW);
+    for (i=0; i<MAX_PLANT_COUNT; i++)
+    {
+      digitalWrite(O_PLANT_SELECT_PINS[i], LOW);
+    }
+    digitalWrite(O_LIGHTSENSOR_ACTIVATE_PIN, LOW);
+
+    conf_sec_between_reading = DEFAULT_CONF_SEC_BETWEEN_READING;
+
     for (i=0; i<MAX_PLANT_COUNT; i++)
     {
       plant_sensor_value[CURRENT][i] = plant_sensor_value[OLD][i] = 0;
@@ -532,7 +571,6 @@ void setup()
       conf_valve_trigger_value[i] = DEFAULT_CONF_VALVE_TRIGGER_VALUE;
       conf_valve_open_ms[i] = DEFAULT_CONF_VALVE_OPEN_MS;
       conf_valve_sec_grace_period[i] = DEFAULT_CONF_VALVE_SEC_GRACE_PERIOD;
-
     }
     lightsensor_value[CURRENT] = lightsensor_value[OLD] = 0.0;
     tempsensor_value[CURRENT] = tempsensor_value[OLD] = 0.0;
@@ -545,22 +583,25 @@ void setup()
     mqtt_path_prefix = F("minidrivhus/");
     mqtt_path_prefix += mqtt_sensorid_param;
     mqtt_path_prefix += F("/");
-    
+
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid_param, password_param);
     while (WiFi.status() != WL_CONNECTED) {
       delay(500);
     }
   
-    server.onNotFound(handleNotFound);
-    server.begin();
+    do {
+      WiFi.begin(ssid_param, *password_param ? password_param : NULL);
+      WiFi.waitForConnectResult();
+    } while (!WiFi.isConnected());
   
     if (mqtt_enabled)
     {
-      mqtt_client.setServer(mqtt_servername_param, 1883);
+      mqtt_client.setServer(mqtt_servername_param, mqtt_serverport_param);
       mqtt_client.setCallback(mqttCallback);
       reconnectMQTT();
     }
+
 
     state = START;
     onTick();
@@ -571,6 +612,8 @@ void loop()
 {
   if (state == SETUP_MODE) {
       dnsServer.processNextRequest();
+      server.handleClient();
+      delay(100);
   }
   else
   {
@@ -581,19 +624,17 @@ void loop()
       }
       mqtt_client.loop();
     }
-  }
 
-  server.handleClient();
-
-  delay(dht.getMinimumSamplingPeriod());
-  if (should_read_temp_sensor)
-  {
-    should_read_temp_sensor = false;
-    TempAndHumidity temp_and_humidity = dht.getTempAndHumidity();
-    if (dht.getStatus() == DHTesp::ERROR_NONE)
+    delay(dht.getMinimumSamplingPeriod());
+    if (should_read_temp_sensor)
     {
-      tempsensor_value[CURRENT] = temp_and_humidity.temperature;
-      humiditysensor_value[CURRENT] = temp_and_humidity.humidity;
+      should_read_temp_sensor = false;
+      TempAndHumidity temp_and_humidity = dht.getTempAndHumidity();
+      if (dht.getStatus() == DHTesp::ERROR_NONE)
+      {
+        tempsensor_value[CURRENT] = temp_and_humidity.temperature;
+        humiditysensor_value[CURRENT] = temp_and_humidity.humidity;
+      }
     }
   }
 }
