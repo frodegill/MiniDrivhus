@@ -9,16 +9,16 @@
 /* PCB v2 for WeMos D1 R1
 
  MQTT paths:
- /minidrivhus/<sensorid>/light
- /minidrivhus/<sensorid>/temp
- /minidrivhus/<sensorid>/humidity
- /minidrivhus/<sensorid>/plant[1..n]/moisture
- /minidrivhus/<sensorid>/plant[1..n]/valve_open_count
- /minidrivhus/<sensorid>/config/sec_between_reading
- /minidrivhus/<sensorid>/config/plant_count
- /minidrivhus/<sensorid>/config/plant[1..n]/valve_trigger_value
- /minidrivhus/<sensorid>/config/plant[1..n]/valve_open_ms
- /minidrivhus/<sensorid>/config/plant[1..n]/sec_valve_grace_period
+ minidrivhus/<sensorid>/light
+ minidrivhus/<sensorid>/temp
+ minidrivhus/<sensorid>/humidity
+ minidrivhus/<sensorid>/plant[1..n]/moisture
+ minidrivhus/<sensorid>/plant[1..n]/valve_open_count
+ minidrivhus/<sensorid>/config/sec_between_reading
+ minidrivhus/<sensorid>/config/plant_count
+ minidrivhus/<sensorid>/config/plant[1..n]/valve_trigger_value
+ minidrivhus/<sensorid>/config/plant[1..n]/valve_open_ms
+ minidrivhus/<sensorid>/config/plant[1..n]/sec_valve_grace_period
  */
 
 static const char* SETUP_SSID = "sensor-setup";
@@ -26,6 +26,8 @@ static const byte EEPROM_INITIALIZED_MARKER = 0xF2; //Just a magic number
 
 static const byte BUILTIN_LED_PIN = D9;
 static const byte BUILTIN_LED_OFF = HIGH;
+
+#define DHT_MODEL (DHTesp::AM2302)
 
 // D5 = Board LED, D9 = Built in LED (HIGH == ON), D8 & D9 Pull-up, D10 pull-down
 static const byte I_SETUP_MODE_PIN           = D0; //Uses internal pull-up
@@ -68,7 +70,7 @@ enum State {
   ACTIVATE_LIGHTSENSOR,
   READ_LIGHTSENSOR,
   ACTIVATE_TEMPHUMIDSENSOR,
-  READ_TEMPHUMIDSENSOR, //DHT11 cannot be read in interrupt, so this state is unused (reading is done in main loop)
+  READ_TEMPHUMIDSENSOR, //DHTxx cannot be read in interrupt, so this state is unused (reading is done in main loop)
   FINISHED
 };
 
@@ -239,7 +241,7 @@ void onTick()
         }
       case READ_TEMPHUMIDSENSOR:
         {
-          //DHT11 cannot be read in interrupt, so this state is unused (reading is done in main loop)
+          //DHTxx cannot be read in interrupt, so this state is unused (reading is done in main loop)
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
           state = FINISHED;
           break;
@@ -362,7 +364,7 @@ void handleSetupRoot() {
       strncpy(mqtt_username_param, server.arg("mqtt_username").c_str(), MAX_MQTT_USERNAME_LENGTH);
       mqtt_username_param[MAX_MQTT_USERNAME_LENGTH] = 0;
     }
-    if (server.hasArg("mqtt_password") && !server.arg("mqtt_password").equals(F("mqtt_password")))
+    if (server.hasArg("mqtt_password") && !server.arg("mqtt_password").equals(F("password")))
     {
       strncpy(mqtt_password_param, server.arg("mqtt_password").c_str(), MAX_MQTT_PASSWORD_LENGTH);
       mqtt_password_param[MAX_MQTT_PASSWORD_LENGTH] = 0;
@@ -485,13 +487,17 @@ void publishMQTTValue(const String& topic, const String& msg)
 {
   if (mqtt_enabled)
   {
-    mqtt_client.publish((String(mqtt_sensorid_param)+F("/")+topic).c_str(), msg.c_str());
+    mqtt_client.publish((String(mqtt_path_prefix)+topic).c_str(), msg.c_str());
   }
 }
 
-void publishMQTTValue(const String& topic, float value)
+void updateValue(const String& topic, float new_value, volatile float& old_value)
 {
-  publishMQTTValue(topic, String(value));
+  if (new_value != old_value)
+  {
+    publishMQTTValue(topic, String(new_value));
+    old_value = new_value;
+  }
 }
 
 void reconnectMQTT() {
@@ -539,7 +545,7 @@ void setup()
   }
   else
   {
-    dht.setup(I_TEMPHUMIDSENSOR_PIN, DHTesp::DHT11);
+    dht.setup(I_TEMPHUMIDSENSOR_PIN, DHT_MODEL);
 
     //Prepare pins
     byte i;
@@ -590,18 +596,12 @@ void setup()
       delay(500);
     }
   
-    do {
-      WiFi.begin(ssid_param, *password_param ? password_param : NULL);
-      WiFi.waitForConnectResult();
-    } while (!WiFi.isConnected());
-  
     if (mqtt_enabled)
     {
       mqtt_client.setServer(mqtt_servername_param, mqtt_serverport_param);
       mqtt_client.setCallback(mqttCallback);
       reconnectMQTT();
     }
-
 
     state = START;
     onTick();
@@ -634,7 +634,12 @@ void loop()
       {
         tempsensor_value[CURRENT] = temp_and_humidity.temperature;
         humiditysensor_value[CURRENT] = temp_and_humidity.humidity;
+
+        updateValue(F("temp"), tempsensor_value[CURRENT], tempsensor_value[OLD]);
+        updateValue(F("humidity"), humiditysensor_value[CURRENT], humiditysensor_value[OLD]);
       }
     }
+
+    updateValue(F("light"), lightsensor_value[CURRENT]*100.0, lightsensor_value[OLD]);
   }
 }
