@@ -640,6 +640,6 @@ void loop()
       }
     }
 
-    updateValue(F("light"), lightsensor_value[CURRENT]*100.0, lightsensor_value[OLD]);
+    updateValue(F("light"), lightsensor_value[CURRENT], lightsensor_value[OLD]);
   }
 }
