@@ -1,8 +1,8 @@
 #include <DHTesp.h>           // Library: DHT_sensor_library_fror_ESPx
 #include <DNSServer.h>
 #include <EEPROM.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
+#include <WiFi.h>
+#include <WebServer.h>
 #include <PubSubClient.h>     // Library: PubSubClient
 #include <Ticker.h>
 
@@ -30,30 +30,24 @@ enum DEBUG_MODE {
 #define MQTT_DEBUG_TOPIC "debug"
 
 static const char* SETUP_SSID = "sensor-setup";
-static const byte EEPROM_INITIALIZED_MARKER = 0xF2; //Just a magic number
-
-static const byte BUILTIN_LED_PIN = D9;
-static const byte BUILTIN_LED_OFF = HIGH;
+static const byte EEPROM_INITIALIZED_MARKER = 0xF0; //Just a magic number
 
 #define DHT_MODEL (DHTesp::AM2302)
 
-// D5 = Board LED, D9 = Built in LED (HIGH == ON), D8 & D9 Pull-up, D10 pull-down
-static const byte I_SETUP_MODE_PIN           = D0; //Uses internal pull-up
-static const byte I_TEMPHUMIDSENSOR_PIN      = D1;
-static const byte O_LIGHT_RELAY_ACTIVATE_PIN = D2;
-static const byte O_LIGHTSENSOR_ACTIVATE_PIN = D3;
-static const byte O_PLANT_VALVE_MODE_PIN     = D4;
-static const byte O_PLANT_SENSOR_MODE_PIN    = D5;
-static const byte O_PLANT_SELECT_PINS[]      = {D6, D7, D8, D10, BUILTIN_LED_PIN};
-static const byte I_ANALOG_SENSOR_PIN        = A0;
+static const byte I_SETUP_MODE_PIN             = 26; // pull to Ground to enable setup mode
+static const byte I_TEMPHUMIDSENSOR_PIN        = 12;
+static const byte O_LIGHT_RELAY_ACTIVATE_PIN   = 13;
+static const byte O_PLANT_VALVE_PINS[]         = {25, 17, 16, 27, 14};
+static const byte I_ANALOG_PLANT_SENSOR_PINS[] = {2, 4, 36, 34, 38};
+static const byte I_ANALOG_LIGHT_SENSOR_PIN    = 39;
 
-static const byte MAX_PLANT_COUNT = sizeof(O_PLANT_SELECT_PINS)/sizeof(O_PLANT_SELECT_PINS[0]);
+static const byte MAX_PLANT_COUNT = sizeof(O_PLANT_VALVE_PINS)/sizeof(O_PLANT_VALVE_PINS[0]);
 
-static const byte DELAY_BETWEEN_ACTIVE_SENSORS     = 25; //ms between activating sensors
-static const byte DEFAULT_CONF_SEC_BETWEEN_READING = 5; //secoonds min. time between sensor activation
-static const byte DEFAULT_CONF_VALVE_TRIGGER_VALUE = 50; //[0..100]
-static const byte DEFAULT_CONF_VALVE_OPEN_MS       = 5*1000; //ms to keep valve open
-static const byte DEFAULT_CONF_VALVE_SEC_GRACE_PERIOD = 20*60; //sec min. time between valve open
+static const unsigned int DELAY_BETWEEN_ACTIVE_SENSORS     = 25; //ms between activating sensors
+static const unsigned int DEFAULT_CONF_SEC_BETWEEN_READING = 5; //secoonds min. time between sensor activation
+static const unsigned int DEFAULT_CONF_VALVE_TRIGGER_VALUE = 50; //[0..100]
+static const unsigned int DEFAULT_CONF_VALVE_OPEN_MS       = 5*1000; //ms to keep valve open
+static const unsigned int DEFAULT_CONF_VALVE_SEC_GRACE_PERIOD = 20*60; //sec min. time between valve open
 
 static const byte OLD = 0;
 static const byte CURRENT = 1;
@@ -61,30 +55,23 @@ static const byte CURRENT = 1;
 enum State {
   SETUP_MODE,
   START,
-  ACTIVATE_PLANT_SENSOR_MODE,
-  ACTIVATE_FIRST_PLANT_SENSOR,
-  ACTIVATE_LAST_PLANT_SENSOR = ACTIVATE_FIRST_PLANT_SENSOR + (MAX_PLANT_COUNT-1),
   READ_FIRST_PLANT_SENSOR,
   READ_LAST_PLANT_SENSOR = READ_FIRST_PLANT_SENSOR + (MAX_PLANT_COUNT-1),
-  DEACTIVATE_PLANT_SENSOR_MODE,
 
-  ACTIVATE_PLANT_VALVE_MODE,
   ACTIVATE_FIRST_PLANT_VALVE,
   ACTIVATE_LAST_PLANT_VALVE = ACTIVATE_FIRST_PLANT_VALVE + (MAX_PLANT_COUNT-1),
   DEACTIVATE_FIRST_PLANT_VALVE,
   DEACTIVATE_LAST_PLANT_VALVE = DEACTIVATE_FIRST_PLANT_VALVE + (MAX_PLANT_COUNT-1),
-  DEACTIVATE_PLANT_VALVE_MODE,
 
-  ACTIVATE_LIGHTSENSOR,
   READ_LIGHTSENSOR,
-  ACTIVATE_TEMPHUMIDSENSOR,
   READ_TEMPHUMIDSENSOR, //DHTxx cannot be read in interrupt, so this state is unused (reading is done in main loop)
+
   FINISHED
 };
 
 
 DHTesp dht;
-ESP8266WebServer server(80);
+WebServer server(80);
 
 WiFiClient esp_client;
 PubSubClient mqtt_client(esp_client);
@@ -112,13 +99,15 @@ unsigned int conf_valve_open_ms[MAX_PLANT_COUNT];
 unsigned int conf_valve_sec_grace_period[MAX_PLANT_COUNT];
 
 
-#define MAX_SSID_LENGTH            (32)
-#define MAX_PASSWORD_LENGTH        (64)
-#define MAX_MQTT_SERVERNAME_LENGTH (64)
-#define MAX_MQTT_SERVERPORT_LENGTH  (5)
-#define MAX_MQTT_SENSORID_LENGTH   (16)
-#define MAX_MQTT_USERNAME_LENGTH   (32)
-#define MAX_MQTT_PASSWORD_LENGTH   (32)
+static const byte MAX_SSID_LENGTH            = 32;
+static const byte MAX_PASSWORD_LENGTH        = 64;
+static const byte MAX_MQTT_SERVERNAME_LENGTH = 64;
+static const byte MAX_MQTT_SERVERPORT_LENGTH =  5;
+static const byte MAX_MQTT_SENSORID_LENGTH   = 16;
+static const byte MAX_MQTT_USERNAME_LENGTH   = 32;
+static const byte MAX_MQTT_PASSWORD_LENGTH   = 32;
+
+static const uint16_t MAX_ANALOG_VALUE = 4095;
 
 char ssid_param[MAX_SSID_LENGTH+1];
 char password_param[MAX_PASSWORD_LENGTH+1];
@@ -133,50 +122,82 @@ String mqtt_path_prefix;
 volatile bool debug_enabled = false; // Internal, to keep track of Serial status
 
 
+void enableDebug()
+{
+  if (!debug_enabled)
+  {
+    debug_enabled = true;
+    if (debug_mode==DEBUG_SERIAL)
+    {
+      Serial.begin(9600);
+    }
+  }
+}
+
+void disableDebug()
+{
+  if (debug_enabled)
+  {
+    debug_enabled = false;
+    if (debug_mode==DEBUG_SERIAL)
+    {
+      Serial.flush();
+      Serial.end();
+    }
+  }
+}
+
+void printDebug(const char* msg)
+{
+  if (debug_enabled && msg)
+  {
+    if (debug_mode==DEBUG_SERIAL)
+    {
+      Serial.println(msg);
+    }
+    else if (debug_mode==DEBUG_MQTT && mqtt_enabled && mqtt_client.connected())
+    {
+      mqtt_client.publish((String(mqtt_path_prefix)+F(MQTT_DEBUG_TOPIC)).c_str(), msg);
+    }
+  }
+}
+
 void onTick()
 {
-  if (state>=ACTIVATE_FIRST_PLANT_SENSOR && state<=ACTIVATE_LAST_PLANT_SENSOR)
-  {
-    byte plant = state-ACTIVATE_FIRST_PLANT_SENSOR;
-    printDebug((String("onTick - activate sensor ")+String((int)plant)).c_str());
-    digitalWrite(O_PLANT_SELECT_PINS[plant], HIGH);
-    ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-    state = static_cast<State>(READ_FIRST_PLANT_SENSOR+plant);
-  }
-  else if (state>=READ_FIRST_PLANT_SENSOR && state<=READ_LAST_PLANT_SENSOR)
+  if (state>=READ_FIRST_PLANT_SENSOR && state<=READ_LAST_PLANT_SENSOR)
   {
     byte plant = state-READ_FIRST_PLANT_SENSOR;
-    plant_sensor_value[CURRENT][plant] = max(0, min(1023, analogRead(I_ANALOG_SENSOR_PIN)));
+    plant_sensor_value[CURRENT][plant] = max((uint16_t)0, min(MAX_ANALOG_VALUE, analogRead(I_ANALOG_PLANT_SENSOR_PINS[plant])));
     printDebug((String("onTick - read sensor ")+String((int)plant)+String(", got ")+String((int)plant_sensor_value[CURRENT][plant])).c_str());
-    digitalWrite(O_PLANT_SELECT_PINS[plant], LOW);
     ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-    state = (plant+1)<conf_plant_count ? static_cast<State>(ACTIVATE_FIRST_PLANT_SENSOR+plant+1) : DEACTIVATE_PLANT_SENSOR_MODE;
+    state = (plant+1)<conf_plant_count ? static_cast<State>(READ_FIRST_PLANT_SENSOR+plant+1) : ACTIVATE_FIRST_PLANT_VALVE;
   }
   else if (state>=ACTIVATE_FIRST_PLANT_VALVE && state<=ACTIVATE_LAST_PLANT_VALVE)
   {
     byte plant = state-ACTIVATE_FIRST_PLANT_VALVE;
-    byte sensor_percent_value = (plant_sensor_value[CURRENT][plant]*100)/1023;
+    byte sensor_percent_value = (plant_sensor_value[CURRENT][plant]*100)/MAX_ANALOG_VALUE;
     if (sensor_percent_value < conf_valve_trigger_value[plant])
     {
       printDebug((String("onTick - activate valve ")+String((int)plant)).c_str());
-      digitalWrite(O_PLANT_SELECT_PINS[plant], HIGH);
+      digitalWrite(O_PLANT_VALVE_PINS[plant], HIGH);
       plant_valve_open_count[CURRENT][plant]++;
       ticker.attach_ms(conf_valve_open_ms[plant], onTick);
+      state = static_cast<State>(DEACTIVATE_FIRST_PLANT_VALVE+plant);
     }
     else
     {
       printDebug((String("onTick - activate valve ignored, ")+String((int)sensor_percent_value)+String(" >= ")+String((int)conf_valve_trigger_value[plant])).c_str());
       ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+      state = (plant+1)<conf_plant_count ? static_cast<State>(ACTIVATE_FIRST_PLANT_VALVE+plant+1) : READ_LIGHTSENSOR;
     }
-    state = static_cast<State>(DEACTIVATE_FIRST_PLANT_VALVE+plant);
   }
   else if (state>=DEACTIVATE_FIRST_PLANT_VALVE && state<=DEACTIVATE_LAST_PLANT_VALVE)
   {
     byte plant = state-DEACTIVATE_FIRST_PLANT_VALVE;
     printDebug((String("onTick - deactivate valve ")+String((int)plant)).c_str());
-    digitalWrite(O_PLANT_SELECT_PINS[plant], LOW);
+    digitalWrite(O_PLANT_VALVE_PINS[plant], LOW);
     ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-    state = (plant+1)<conf_plant_count ? static_cast<State>(ACTIVATE_FIRST_PLANT_VALVE+plant+1) : DEACTIVATE_PLANT_VALVE_MODE;
+    state = (plant+1)<conf_plant_count ? static_cast<State>(ACTIVATE_FIRST_PLANT_VALVE+plant+1) : READ_LIGHTSENSOR;
   }
   else
   {
@@ -185,92 +206,31 @@ void onTick()
       case START:
         {
           printDebug((String("onTick - start, plant_count=")+String((int)conf_plant_count)).c_str());
-          digitalWrite(O_PLANT_SENSOR_MODE_PIN, LOW);
-          digitalWrite(O_PLANT_VALVE_MODE_PIN, LOW);
-          byte i;
-          for (i=0; i<conf_plant_count; i++)
-          {
-            digitalWrite(O_PLANT_SELECT_PINS[i], LOW);
-          }
-          digitalWrite(O_LIGHTSENSOR_ACTIVATE_PIN, LOW);
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-          state = ACTIVATE_PLANT_SENSOR_MODE;
-          break;
-        }
-  
-      case ACTIVATE_PLANT_SENSOR_MODE:
-        {
-          printDebug("onTick - activate sensor mode");
-          digitalWrite(O_PLANT_SENSOR_MODE_PIN, HIGH);
-          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-          state = ACTIVATE_FIRST_PLANT_SENSOR;
-          break;
-        }
-  
-      case DEACTIVATE_PLANT_SENSOR_MODE:
-        {
-          printDebug("onTick - deactivate sensor mode");
-          digitalWrite(O_PLANT_SENSOR_MODE_PIN, LOW);
-          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-          state = ACTIVATE_PLANT_VALVE_MODE;
-          break;
-        }
-  
-      case ACTIVATE_PLANT_VALVE_MODE:
-        {
-          printDebug("onTick - activate valve mode");
-          digitalWrite(O_PLANT_VALVE_MODE_PIN, HIGH);
-          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-          state = ACTIVATE_FIRST_PLANT_VALVE;
-          break;
-        }
-  
-      case DEACTIVATE_PLANT_VALVE_MODE:
-        {
-          printDebug("onTick - deactivate valve mode");
-          digitalWrite(O_PLANT_VALVE_MODE_PIN, LOW);
-          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-          state = ACTIVATE_LIGHTSENSOR;
-          break;
-        }
-  
-      case ACTIVATE_LIGHTSENSOR:
-        {
-          printDebug("onTick - activate light sensor");
-          digitalWrite(O_LIGHTSENSOR_ACTIVATE_PIN, HIGH);
-          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-          state = READ_LIGHTSENSOR;
+          state = READ_FIRST_PLANT_SENSOR;
           break;
         }
   
       case READ_LIGHTSENSOR:
         {
-          int value = max(0, min(1023, analogRead(I_ANALOG_SENSOR_PIN)));
-          digitalWrite(O_LIGHTSENSOR_ACTIVATE_PIN, LOW);
-          lightsensor_value[CURRENT] = 100.0 - 100.0*value/1023.0;
+          int value = max((uint16_t)0, min(MAX_ANALOG_VALUE, analogRead(I_ANALOG_LIGHT_SENSOR_PIN)));
+          lightsensor_value[CURRENT] = 100.0 - 100.0*value/MAX_ANALOG_VALUE;
           printDebug((String("onTick - deactivate light sensor. Read value ")+String((int)lightsensor_value[CURRENT])).c_str());
-  
-          ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-          state = ACTIVATE_TEMPHUMIDSENSOR;
-          break;
-        }
-
-      case ACTIVATE_TEMPHUMIDSENSOR:
-        {
-          printDebug("onTick - request temphumid value");
-          should_read_temp_sensor = true;
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
           state = READ_TEMPHUMIDSENSOR;
           break;
         }
+
       case READ_TEMPHUMIDSENSOR:
         {
-          printDebug("onTick - temphumid value not read here");
           //DHTxx cannot be read in interrupt, so this state is unused (reading is done in main loop)
+          printDebug("onTick - request temphumid value");
+          should_read_temp_sensor = true;
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
           state = FINISHED;
           break;
         }
+
       case FINISHED:
         {
           printDebug("onTick - finished");
@@ -278,6 +238,7 @@ void onTick()
           state = START;
           break;
         }
+      
       default:
         {
           printDebug("Unknown state");
@@ -481,17 +442,12 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     printDebug((String("mqttCallback conf_plant_count=")+String((int)conf_plant_count)).c_str());
     if (conf_plant_count < MAX_PLANT_COUNT)
     {
-      //Deactivate all unused plants and turn off builtin LED
+      //Turn off valves for all unused plants
       byte i;
       for (i=conf_plant_count; i<MAX_PLANT_COUNT-1; i++)
       {
-        digitalWrite(O_PLANT_SELECT_PINS[i], LOW);
+        digitalWrite(O_PLANT_VALVE_PINS[i], LOW);
       }
-      digitalWrite(BUILTIN_LED_PIN, BUILTIN_LED_OFF);
-    }
-    else
-    {
-      digitalWrite(O_PLANT_SELECT_PINS[MAX_PLANT_COUNT-1], LOW);
     }
   }
   else if (0 == strncmp("config/plant", key, 12))
@@ -572,59 +528,16 @@ void reconnectMQTT() {
   }
 }
 
-void enableDebug()
-{
-  if (!debug_enabled)
-  {
-    debug_enabled = true;
-    if (debug_mode==DEBUG_SERIAL)
-    {
-      Serial.begin(9600);
-    }
-  }
-}
-
-void disableDebug()
-{
-  if (debug_enabled)
-  {
-    debug_enabled = false;
-    if (debug_mode==DEBUG_SERIAL)
-    {
-      Serial.flush();
-      Serial.end();
-    }
-  }
-}
-
-void printDebug(const char* msg)
-{
-  if (debug_enabled && msg)
-  {
-    if (debug_mode==DEBUG_SERIAL)
-    {
-      Serial.println(msg);
-    }
-    else if (debug_mode==DEBUG_MQTT && mqtt_enabled && mqtt_client.connected())
-    {
-      mqtt_client.publish((String(mqtt_path_prefix)+F(MQTT_DEBUG_TOPIC)).c_str(), msg);
-    }
-  }
-}
-
 void setup()
 {
   Serial.end();
-  Serial1.end();
   
   EEPROM.begin(1 + MAX_SSID_LENGTH+1 + MAX_PASSWORD_LENGTH+1 + MAX_MQTT_SERVERNAME_LENGTH+1 + MAX_MQTT_SENSORID_LENGTH+1 + MAX_MQTT_USERNAME_LENGTH+1 + MAX_MQTT_PASSWORD_LENGTH+1);
 
-  if (debug_mode!=DEBUG_SERIAL) //Serial TX/RX conflicts with SETUP_MODE pin
-  {
-    pinMode(I_SETUP_MODE_PIN, INPUT_PULLUP);
-    delay(100);
-  }
-  if (debug_mode!=DEBUG_SERIAL && (LOW == digitalRead(I_SETUP_MODE_PIN)))
+  pinMode(I_SETUP_MODE_PIN, INPUT_PULLUP);
+  delay(100);
+
+  if (LOW == digitalRead(I_SETUP_MODE_PIN))
   {
     mqtt_enabled = false;
     state = SETUP_MODE;
@@ -636,31 +549,25 @@ void setup()
   }
   else
   {
-    if (debug_mode!=DEBUG_SERIAL) //Serial TX/RX conflicts with TEMPHUMIDSENSOR pin
-    {
-      pinMode(I_TEMPHUMIDSENSOR_PIN, OUTPUT); //DHT handles this pin itself, but it should be OUTPUT before setup
-      dht.setup(I_TEMPHUMIDSENSOR_PIN, DHT_MODEL);
-    }
+    pinMode(I_TEMPHUMIDSENSOR_PIN, OUTPUT); //DHT handles this pin itself, but it should be OUTPUT before setup
+    dht.setup(I_TEMPHUMIDSENSOR_PIN, DHT_MODEL);
 
     //Prepare pins
     byte i;
-    pinMode(O_PLANT_SENSOR_MODE_PIN, OUTPUT);
-    pinMode(O_PLANT_VALVE_MODE_PIN, OUTPUT);
     for (i=0; i<MAX_PLANT_COUNT; i++)
     {
-      pinMode(O_PLANT_SELECT_PINS[i], OUTPUT);
+      pinMode(O_PLANT_VALVE_PINS[i], OUTPUT);
+      pinMode(I_ANALOG_PLANT_SENSOR_PINS[i], INPUT);
     }
-    pinMode(O_LIGHTSENSOR_ACTIVATE_PIN, OUTPUT);
-    pinMode(I_ANALOG_SENSOR_PIN, INPUT);
+    pinMode(I_ANALOG_LIGHT_SENSOR_PIN, INPUT);
+    pinMode(O_LIGHT_RELAY_ACTIVATE_PIN, OUTPUT);
 
     //Set output pins
-    digitalWrite(O_PLANT_SENSOR_MODE_PIN, LOW);
-    digitalWrite(O_PLANT_VALVE_MODE_PIN, LOW);
     for (i=0; i<MAX_PLANT_COUNT; i++)
     {
-      digitalWrite(O_PLANT_SELECT_PINS[i], LOW);
+      digitalWrite(O_PLANT_VALVE_PINS[i], LOW);
     }
-    digitalWrite(O_LIGHTSENSOR_ACTIVATE_PIN, LOW);
+    digitalWrite(O_LIGHT_RELAY_ACTIVATE_PIN, LOW);
 
     conf_sec_between_reading = DEFAULT_CONF_SEC_BETWEEN_READING;
 
@@ -726,31 +633,24 @@ void loop()
       mqtt_client.loop();
     }
 
-    if (debug_mode != DEBUG_SERIAL) //Serial TX/RX conflicts with TEMPHUMIDSENSOR pin
+    delay(dht.getMinimumSamplingPeriod());
+    if (should_read_temp_sensor)
     {
-      delay(dht.getMinimumSamplingPeriod());
-      if (should_read_temp_sensor)
+      should_read_temp_sensor = false;
+      TempAndHumidity temp_and_humidity = dht.getTempAndHumidity();
+      if (dht.getStatus() == DHTesp::ERROR_NONE)
       {
-        should_read_temp_sensor = false;
-        TempAndHumidity temp_and_humidity = dht.getTempAndHumidity();
-        if (dht.getStatus() == DHTesp::ERROR_NONE)
-        {
-          tempsensor_value[CURRENT] = temp_and_humidity.temperature;
-          humiditysensor_value[CURRENT] = temp_and_humidity.humidity;
-          printDebug((String("reading temp ")+String((int)tempsensor_value[CURRENT])+String(" and humidity ")+String((int)humiditysensor_value[CURRENT])).c_str());
-  
-          updateValue(F("temp"), tempsensor_value[CURRENT], tempsensor_value[OLD]);
-          updateValue(F("humidity"), humiditysensor_value[CURRENT], humiditysensor_value[OLD]);
-        }
-        else
-        {
-          printDebug((String("reading temp and humidity failed with error ")+String((int)dht.getStatus())).c_str());
-        }
+        tempsensor_value[CURRENT] = temp_and_humidity.temperature;
+        humiditysensor_value[CURRENT] = temp_and_humidity.humidity;
+        printDebug((String("reading temp ")+String((int)tempsensor_value[CURRENT])+String(" and humidity ")+String((int)humiditysensor_value[CURRENT])).c_str());
+
+        updateValue(F("temp"), tempsensor_value[CURRENT], tempsensor_value[OLD]);
+        updateValue(F("humidity"), humiditysensor_value[CURRENT], humiditysensor_value[OLD]);
       }
-    }
-    else
-    {
-      delay(2000);
+      else
+      {
+        printDebug((String("reading temp and humidity failed with error ")+String((int)dht.getStatus())).c_str());
+      }
     }
 
     updateValue(F("light"), lightsensor_value[CURRENT], lightsensor_value[OLD]);
