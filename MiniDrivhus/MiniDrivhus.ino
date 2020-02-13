@@ -5,12 +5,8 @@
 #include "settings.h"
 
 #include <DHTesp.h>           // Library: DHT_sensor_library_fror_ESPx
-//#include <DNSServer.h>
-//#include <EEPROM.h>
-//#include <WiFi.h>
-//#include <WebServer.h>
-//#include <PubSubClient.h>     // Library: PubSubClient
 #include <Ticker.h>
+
 
 /* PCB v4 for WeMos D1 R1
 
@@ -19,12 +15,12 @@
  minidrivhus/<sensorid>/temp
  minidrivhus/<sensorid>/humidity
  minidrivhus/<sensorid>/plant[1..n]/moisture
- minidrivhus/<sensorid>/plant[1..n]/valve_open_count
+ minidrivhus/<sensorid>/plant[1..n]/watering_count
  minidrivhus/<sensorid>/config/sec_between_reading
  minidrivhus/<sensorid>/config/plant_count
- minidrivhus/<sensorid>/config/plant[1..n]/valve_trigger_value
- minidrivhus/<sensorid>/config/plant[1..n]/valve_open_ms
- minidrivhus/<sensorid>/config/plant[1..n]/sec_valve_grace_period
+ minidrivhus/<sensorid>/config/plant[1..n]/watering_trigger_value
+ minidrivhus/<sensorid>/config/plant[1..n]/watering_duration_ms
+ minidrivhus/<sensorid>/config/plant[1..n]/watering_grace_period_sec
  minidrivhus/<sensorid>/debug
  */
 
@@ -40,13 +36,13 @@ enum State {
   
   ACTIVATE_PLANT_SENSOR_1,
   READ_PLANT_SENSOR_1,
-  ACTIVATE_PLANT_VALVE_1,
-  DEACTIVATE_PLANT_VALVE_1,
+  ACTIVATE_PLANT_WATERING_1,
+  DEACTIVATE_PLANT_WATERING_1,
 
   ACTIVATE_PLANT_SENSOR_2,
   READ_PLANT_SENSOR_2,
-  ACTIVATE_PLANT_VALVE_2,
-  DEACTIVATE_PLANT_VALVE_2,
+  ACTIVATE_PLANT_WATERING_2,
+  DEACTIVATE_PLANT_WATERING_2,
 
   ACTIVATE_LIGHTSENSOR,
   READ_LIGHTSENSOR,
@@ -68,8 +64,8 @@ volatile State state;
 volatile bool should_read_temp_sensor;
 
 volatile uint16_t plant_sensor_value[2][MAX_PLANT_COUNT];
-volatile uint16_t plant_valve_open_count[2][MAX_PLANT_COUNT];
-volatile long plant_valve_open_time[MAX_PLANT_COUNT];
+volatile uint16_t plant_watering_count[2][MAX_PLANT_COUNT];
+volatile long previous_plant_watering_time[MAX_PLANT_COUNT];
 volatile float lightsensor_value[2];
 float tempsensor_value[2];
 float humiditysensor_value[2];
@@ -111,42 +107,42 @@ void onTick()
         plant_sensor_value[CURRENT][plant] = max(0, min(static_cast<int>(MAX_ANALOG_VALUE), analogRead(A0)));
         g_debug.print((String("onTick - read sensor ")+String((int)plant)+String(", got ")+String((int)plant_sensor_value[CURRENT][plant])).c_str());
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-        state = (plant==0) ? ACTIVATE_PLANT_VALVE_1 : ACTIVATE_PLANT_VALVE_2;
+        state = (plant==0) ? ACTIVATE_PLANT_WATERING_1 : ACTIVATE_PLANT_WATERING_2;
         break;
       }
 
-    case ACTIVATE_PLANT_VALVE_1:
-    case ACTIVATE_PLANT_VALVE_2:
+    case ACTIVATE_PLANT_WATERING_1:
+    case ACTIVATE_PLANT_WATERING_2:
       {
-        byte plant = (state==ACTIVATE_PLANT_VALVE_1)?0:1;
+        byte plant = (state==ACTIVATE_PLANT_WATERING_1)?0:1;
         byte sensor_percent_value = (plant_sensor_value[CURRENT][plant]*100)/MAX_ANALOG_VALUE;
-        if (sensor_percent_value < g_settings.conf_valve_trigger_value[plant])
+        if (sensor_percent_value < g_settings.conf_watering_trigger_value[plant])
         {
           long current_sec = millis()/1000;
-          if (current_sec < plant_valve_open_time[plant]) //Wrapped. Happens every ~50 days
+          if (current_sec < previous_plant_watering_time[plant]) //Wrapped. Happens every ~50 days
           {
-            plant_valve_open_time[plant] = current_sec;
+            previous_plant_watering_time[plant] = current_sec;
           }
           
-          if (plant_valve_open_time[plant]+g_settings.conf_valve_sec_grace_period[plant] >= current_sec)
+          if (previous_plant_watering_time[plant]+g_settings.conf_watering_grace_period_sec[plant] >= current_sec)
           {
-            g_debug.print((String("onTick - skipping activate valve ")+String((int)plant)+String(" (in ")+String((long)(current_sec-plant_valve_open_time[plant]))+String(" of ")+String((int)g_settings.conf_valve_sec_grace_period[plant])+String(" sec grace period")).c_str());
+            g_debug.print((String("onTick - skipping activate watering ")+String((int)plant)+String(" (in ")+String((long)(current_sec-previous_plant_watering_time[plant]))+String(" of ")+String((int)g_settings.conf_watering_grace_period_sec[plant])+String(" sec grace period")).c_str());
             ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
             state = (plant==0 && g_settings.conf_plant_count>1) ? ACTIVATE_PLANT_SENSOR_2 : ACTIVATE_LIGHTSENSOR;
           }
           else
           {
-            g_debug.print((String("onTick - activate valve ")+String((int)plant)).c_str());
-            digitalWrite(O_PLANT_VALVE_PINS[plant], HIGH);
-            plant_valve_open_count[CURRENT][plant]++;
-            plant_valve_open_time[plant] = current_sec;
-            ticker.attach_ms(g_settings.conf_valve_open_ms[plant], onTick);
-            state = (plant==0) ? DEACTIVATE_PLANT_VALVE_1 : DEACTIVATE_PLANT_VALVE_2;
+            g_debug.print((String("onTick - activate watering ")+String((int)plant)).c_str());
+            digitalWrite(O_PLANT_WATERING_PINS[plant], HIGH);
+            plant_watering_count[CURRENT][plant]++;
+            previous_plant_watering_time[plant] = current_sec;
+            ticker.attach_ms(g_settings.conf_watering_duration_ms[plant], onTick);
+            state = (plant==0) ? DEACTIVATE_PLANT_WATERING_1 : DEACTIVATE_PLANT_WATERING_2;
           }
         }
         else
         {
-          g_debug.print((String("onTick - activate valve ")+String((int)plant)+String(" ignored, ")+String((int)sensor_percent_value)+String(" >= ")+String((int)g_settings.conf_valve_trigger_value[plant])).c_str());
+          g_debug.print((String("onTick - activate watering ")+String((int)plant)+String(" ignored, ")+String((int)sensor_percent_value)+String(" >= ")+String((int)g_settings.conf_watering_trigger_value[plant])).c_str());
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
           state = (plant==0 && g_settings.conf_plant_count>1) ? ACTIVATE_PLANT_SENSOR_2 : ACTIVATE_LIGHTSENSOR;
         }
@@ -154,12 +150,12 @@ void onTick()
         break;
       }
 
-    case DEACTIVATE_PLANT_VALVE_1:
-    case DEACTIVATE_PLANT_VALVE_2:
+    case DEACTIVATE_PLANT_WATERING_1:
+    case DEACTIVATE_PLANT_WATERING_2:
       {
-        byte plant = (state==DEACTIVATE_PLANT_VALVE_1)?0:1;
-        g_debug.print((String("onTick - deactivate valve ")+String((int)plant)).c_str());
-        digitalWrite(O_PLANT_VALVE_PINS[plant], LOW);
+        byte plant = (state==DEACTIVATE_PLANT_WATERING_1)?0:1;
+        g_debug.print((String("onTick - deactivate watering ")+String((int)plant)).c_str());
+        digitalWrite(O_PLANT_WATERING_PINS[plant], LOW);
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
         state = (plant==0 && g_settings.conf_plant_count>1) ? ACTIVATE_PLANT_SENSOR_2 : ACTIVATE_LIGHTSENSOR;
         break;
@@ -218,6 +214,15 @@ void updateValue(const String& topic, float new_value, volatile float& old_value
   }
 }
 
+void updateValue(const String& topic, uint16_t new_value, volatile uint16_t& old_value)
+{
+  if (new_value != old_value)
+  {
+    g_mqtt.publishMQTTValue(topic, String(new_value));
+    old_value = new_value;
+  }
+}
+
 void setup()
 {
   g_debug.enable();
@@ -242,7 +247,7 @@ void setup()
     byte i;
     for (i=0; i<MAX_PLANT_COUNT; i++)
     {
-      pinMode(O_PLANT_VALVE_PINS[i], OUTPUT);
+      pinMode(O_PLANT_WATERING_PINS[i], OUTPUT);
     }
     pinMode(O_LIGHT_RELAY_ACTIVATE_PIN, OUTPUT);
     pinMode(O_ANALOG_ADDR_S0, OUTPUT);
@@ -252,7 +257,7 @@ void setup()
     //Set output pins
     for (i=0; i<MAX_PLANT_COUNT; i++)
     {
-      digitalWrite(O_PLANT_VALVE_PINS[i], LOW);
+      digitalWrite(O_PLANT_WATERING_PINS[i], LOW);
     }
     digitalWrite(O_LIGHT_RELAY_ACTIVATE_PIN, LOW);
     selectAnalogAddr(UNUSED_ANALOG_SENSOR_ADDR);
@@ -262,11 +267,11 @@ void setup()
     for (i=0; i<MAX_PLANT_COUNT; i++)
     {
       plant_sensor_value[CURRENT][i] = plant_sensor_value[OLD][i] = 0;
-      plant_valve_open_count[CURRENT][i] = plant_valve_open_count[OLD][i] = 0;
-      g_settings.conf_valve_trigger_value[i] = Settings::DEFAULT_CONF_VALVE_TRIGGER_VALUE;
-      g_settings.conf_valve_open_ms[i] = Settings::DEFAULT_CONF_VALVE_OPEN_MS;
-      g_settings.conf_valve_sec_grace_period[i] = Settings::DEFAULT_CONF_VALVE_SEC_GRACE_PERIOD;
-      plant_valve_open_time[i] = 0;
+      plant_watering_count[CURRENT][i] = plant_watering_count[OLD][i] = 0;
+      g_settings.conf_watering_trigger_value[i] = Settings::DEFAULT_CONF_WATERING_TRIGGER_VALUE;
+      g_settings.conf_watering_duration_ms[i] = Settings::DEFAULT_CONF_WATERING_DURATION_MS;
+      g_settings.conf_watering_grace_period_sec[i] = Settings::DEFAULT_CONF_WATERING_GRACE_PERIOD_SEC;
+      previous_plant_watering_time[i] = 0;
     }
     lightsensor_value[CURRENT] = lightsensor_value[OLD] = 0.0;
     tempsensor_value[CURRENT] = tempsensor_value[OLD] = 0.0;
@@ -310,5 +315,17 @@ void loop()
 
       updateValue(F("light"), lightsensor_value[CURRENT], lightsensor_value[OLD]);
     }
+  }
+
+  byte plant;
+  for (plant=0; plant<g_settings.conf_plant_count; plant++)
+  {
+    String plant_path = F("plant");
+    plant_path += String(plant);
+
+    updateValue(plant_path+F("/moisture"), plant_sensor_value[CURRENT][plant], plant_sensor_value[OLD][plant]);
+
+    updateValue(plant_path+F("/watering_count"), plant_watering_count[CURRENT][plant], plant_watering_count[OLD][plant]);
+    plant_watering_count[CURRENT][plant] = plant_watering_count[OLD][plant] = 0;
   }
 }

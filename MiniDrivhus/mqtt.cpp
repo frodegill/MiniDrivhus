@@ -18,7 +18,7 @@ MQTT::MQTT()
 
 void MQTT::mqttCallback(char* topic, byte* payload, unsigned int length)
 {
-  if (0 != strncmp(g_settings.mqtt_sensorid_param, topic, strlen(g_settings.mqtt_sensorid_param)))
+  if (0 != strncmp(g_settings.mqtt_sensorid_param, topic, strnlen(g_settings.mqtt_sensorid_param, length)))
   {
     return;
   }
@@ -33,15 +33,15 @@ void MQTT::mqttCallback(char* topic, byte* payload, unsigned int length)
   }
   else if (0 == strcmp("config/plant_count", key))
   {
-    g_settings.conf_plant_count = min(static_cast<const int>(MAX_PLANT_COUNT), max(1, atoi(reinterpret_cast<const char*>(payload))));
+    g_settings.conf_plant_count = min(static_cast<int>(MAX_PLANT_COUNT), max(1, atoi(reinterpret_cast<const char*>(payload))));
     g_debug.print((String("mqttCallback conf_plant_count=")+String((int)g_settings.conf_plant_count)).c_str());
     if (g_settings.conf_plant_count < MAX_PLANT_COUNT)
     {
-      //Turn off valves for all unused plants
+      //Turn off watering for all unused plants
       byte i;
       for (i=g_settings.conf_plant_count; i<MAX_PLANT_COUNT-1; i++)
       {
-        digitalWrite(O_PLANT_VALVE_PINS[i], LOW);
+        digitalWrite(O_PLANT_WATERING_PINS[i], LOW);
       }
     }
   }
@@ -56,20 +56,20 @@ void MQTT::mqttCallback(char* topic, byte* payload, unsigned int length)
 
     if (plantno <= MAX_PLANT_COUNT && *key++=='/')
     {
-      if (0 == strcmp("valve_trigger_value", key))
+      if (0 == strcmp("watering_trigger_value", key))
       {
-        g_settings.conf_valve_trigger_value[plantno] = min(100, max(0, atoi(reinterpret_cast<const char*>(payload))));
-        g_debug.print((String("mqttCallback plant=")+String((int)plantno)+String(" conf_valve_trigger_value=")+String((int)g_settings.conf_valve_trigger_value[plantno])).c_str());
+        g_settings.conf_watering_trigger_value[plantno] = min(100, max(0, atoi(reinterpret_cast<const char*>(payload))));
+        g_debug.print((String("mqttCallback plant=")+String((int)plantno)+String(" conf_watering_trigger_value=")+String((int)g_settings.conf_watering_trigger_value[plantno])).c_str());
       }
-      else if (0 == strcmp("valve_open_ms", key))
+      else if (0 == strcmp("watering_duration_ms", key))
       {
-        g_settings.conf_valve_open_ms[plantno] = max(1, atoi(reinterpret_cast<const char*>(payload)));
-        g_debug.print((String("mqttCallback plant=")+String((int)plantno)+String(" conf_valve_open_ms=")+String((int)g_settings.conf_valve_open_ms[plantno])).c_str());
+        g_settings.conf_watering_duration_ms[plantno] = max(1, atoi(reinterpret_cast<const char*>(payload)));
+        g_debug.print((String("mqttCallback plant=")+String((int)plantno)+String(" conf_watering_duration_ms=")+String((int)g_settings.conf_watering_duration_ms[plantno])).c_str());
       }
-      else if (0 == strcmp("sec_valve_grace_period", key))
+      else if (0 == strcmp("watering_grace_period_sec", key))
       {
-        g_settings.conf_valve_sec_grace_period[plantno] = max(1, atoi(reinterpret_cast<const char*>(payload)));
-        g_debug.print((String("mqttCallback plant=")+String((int)plantno)+String(" conf_valve_sec_grace_period=")+String((int)g_settings.conf_valve_sec_grace_period[plantno])).c_str());
+        g_settings.conf_watering_grace_period_sec[plantno] = max(1, atoi(reinterpret_cast<const char*>(payload)));
+        g_debug.print((String("mqttCallback plant=")+String((int)plantno)+String(" conf_watering_grace_period_sec=")+String((int)g_settings.conf_watering_grace_period_sec[plantno])).c_str());
       }
     }
   }
@@ -87,14 +87,6 @@ void MQTT::publishMQTTValue(const String& topic, const String& msg)
 void MQTT::publishMQTTValue(const String& topic, float value)
 {
   publishMQTTValue(topic, String(value, 4));
-}
-
-void MQTT::publishMQTTValues(const float* g_temperature, const float* g_humidity, const float* g_mq2_value, const float* g_mq7_value, const float* g_mq8_value, const float* g_mq9_value, const float* g_mq135_value)
-{
-  if (!mqtt_enabled)
-    return;
-
-    //ToDo
 }
 
 bool MQTT::connectMQTT()
@@ -116,8 +108,9 @@ bool MQTT::connectMQTT()
         plant += String(i);
         plant += F("/");
         
-        mqtt_client->subscribe((String(g_settings.mqtt_sensorid_param)+plant+F("valve_trigger_value")).c_str());
-        mqtt_client->subscribe((String(g_settings.mqtt_sensorid_param)+plant+F("valve_open_ms")).c_str());
+        mqtt_client->subscribe((String(g_settings.mqtt_sensorid_param)+plant+F("watering_trigger_value")).c_str());
+        mqtt_client->subscribe((String(g_settings.mqtt_sensorid_param)+plant+F("watering_duration_ms")).c_str());
+        mqtt_client->subscribe((String(g_settings.mqtt_sensorid_param)+plant+F("watering_grace_period_sec")).c_str());
       }
 
       g_debug.print("MQTT topics subscribed");
