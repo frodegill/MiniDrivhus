@@ -77,7 +77,7 @@ void MQTT::mqttCallback(char* topic, byte* payload, unsigned int length)
 
 void MQTT::publishMQTTValue(const String& topic, const String& msg)
 {
-  if (mqtt_enabled && connectMQTT())
+  if (isEnabled() && connectMQTT())
   {
     bool ret = mqtt_client->publish((String(g_settings.mqtt_sensorid_param)+topic).c_str(), msg.c_str(), true);
     g_debug.print((String("publishMQTTValue topic=")+String(g_settings.mqtt_sensorid_param)+topic+String(" msg=")+msg+String(" returned ")+String(ret?"true":"false")).c_str());
@@ -92,7 +92,7 @@ void MQTT::publishMQTTValue(const String& topic, float value)
 bool MQTT::connectMQTT()
 {
   byte i = 0;
-  while (i++<10 && mqtt_enabled && !mqtt_client->connected())
+  while (i++<10 && isEnabled() && !mqtt_client->connected())
   {
     if (mqtt_client->connect(g_settings.mqtt_sensorid_param, g_settings.mqtt_username_param, g_settings.mqtt_password_param))
     {
@@ -134,6 +134,7 @@ void MQTT::initialize()
 {
   mqtt_client->setServer(g_settings.mqtt_servername_param, 1883);
   mqtt_client->setCallback(::mqttCallback);
+  mqtt_enabled = true;
   connectMQTT();
 }
 

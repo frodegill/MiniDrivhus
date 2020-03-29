@@ -65,7 +65,7 @@ volatile bool should_read_temp_sensor;
 
 volatile uint16_t plant_sensor_value[2][MAX_PLANT_COUNT];
 volatile uint16_t plant_watering_count[2][MAX_PLANT_COUNT];
-volatile long previous_plant_watering_time[MAX_PLANT_COUNT];
+volatile unsigned long previous_plant_watering_time[MAX_PLANT_COUNT];
 volatile float lightsensor_value[2];
 float tempsensor_value[2];
 float humiditysensor_value[2];
@@ -84,7 +84,6 @@ void onTick()
   {
     case START:
       {
-        g_debug.print((String("onTick - start, plant_count=")+String((int)g_settings.conf_plant_count)).c_str());
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
         state = ACTIVATE_PLANT_SENSOR_1;
         break;
@@ -118,7 +117,7 @@ void onTick()
         byte sensor_percent_value = (plant_sensor_value[CURRENT][plant]*100)/MAX_ANALOG_VALUE;
         if (sensor_percent_value < g_settings.conf_watering_trigger_value[plant])
         {
-          long current_sec = millis()/1000;
+          unsigned long current_sec = millis()/1000;
           if (current_sec < previous_plant_watering_time[plant]) //Wrapped. Happens every ~50 days
           {
             previous_plant_watering_time[plant] = current_sec;
@@ -126,7 +125,7 @@ void onTick()
           
           if (previous_plant_watering_time[plant]+g_settings.conf_watering_grace_period_sec[plant] >= current_sec)
           {
-            g_debug.print((String("onTick - skipping activate watering ")+String((int)plant)+String(" (in ")+String((long)(current_sec-previous_plant_watering_time[plant]))+String(" of ")+String((int)g_settings.conf_watering_grace_period_sec[plant])+String(" sec grace period")).c_str());
+            g_debug.print((String("onTick - skipping activate watering ")+String((int)plant)+String(" (in ")+String((unsigned long)(current_sec-previous_plant_watering_time[plant]))+String(" of ")+String((int)g_settings.conf_watering_grace_period_sec[plant])+String(" sec grace period")).c_str());
             ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
             state = (plant==0 && g_settings.conf_plant_count>1) ? ACTIVATE_PLANT_SENSOR_2 : ACTIVATE_LIGHTSENSOR;
           }
@@ -182,7 +181,6 @@ void onTick()
     case READ_TEMPHUMIDSENSOR:
       {
         //DHTxx cannot be read in interrupt, so this state is unused (reading is done in main loop)
-        g_debug.print("onTick - request temphumid value");
         should_read_temp_sensor = true;
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
         state = FINISHED;
@@ -192,7 +190,6 @@ void onTick()
     case FINISHED:
       {
         selectAnalogAddr(UNUSED_ANALOG_SENSOR_ADDR);
-        g_debug.print("onTick - finished");
         ticker.attach_ms(g_settings.conf_sec_between_reading*1000, onTick);
         state = START;
         break;
@@ -228,16 +225,20 @@ void setup()
   g_debug.enable();
   g_settings.enable();
   
-  pinMode(I_SETUP_MODE_PIN, INPUT_PULLUP);
+  pinMode(I_SETUP_MODE_PIN, INPUT);
   delay(100);
 
   if (LOW == digitalRead(I_SETUP_MODE_PIN))
   {
+    g_debug.print("Mode = SETUP");
+
     state = SETUP_MODE;
     g_settings.activateSetupAP();
   }
   else
   {
+    g_debug.print("Mode = NORMAL");
+
     g_settings.activateWifi();
 
     pinMode(I_TEMPHUMIDSENSOR_PIN, OUTPUT); //DHT handles this pin itself, but it should be OUTPUT before setup
@@ -279,7 +280,7 @@ void setup()
     should_read_temp_sensor = false;
 
     state = START;
-    g_debug.print("state=START");
+    g_debug.print((String("state=START, plant_count=")+String((int)g_settings.conf_plant_count)).c_str());
     onTick();
   }
 }
@@ -294,7 +295,6 @@ void loop()
   else
   {
     delay(max(1000, dht.getMinimumSamplingPeriod()));
-    g_debug.print("should_read_temp_sensor?");
     if (should_read_temp_sensor)
     {
       TempAndHumidity temp_and_humidity = dht.getTempAndHumidity();

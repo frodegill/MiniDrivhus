@@ -77,7 +77,7 @@ void Settings::readPersistentParams()
 
 void Settings::writePersistentString(const char* s, size_t max_length, int& adr)
 {
-  for (int i=0; i<min(strlen(s), max_length); i++)
+  for (unsigned int i=0; i<min(strlen(s), max_length); i++)
   {
     EEPROM.write(adr++, s[i]);
   }

@@ -9,7 +9,7 @@ enum DEBUG_MODE
   DEBUG_NONE,
   DEBUG_SERIAL,
   DEBUG_MQTT
-} debug_mode = DEBUG_SERIAL;
+} debug_mode = DEBUG_MQTT;
 #define MQTT_DEBUG_TOPIC "debug"
 
 public:

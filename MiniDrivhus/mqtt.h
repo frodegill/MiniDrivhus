@@ -19,9 +19,12 @@ public:
   void initialize();
   void loop();
 
-public:
+  bool isEnabled() const {return mqtt_enabled;}
+
+private:
   bool mqtt_enabled;
 
+public:
   WiFiClient esp_client;
   std::shared_ptr<PubSubClient> mqtt_client;
 };

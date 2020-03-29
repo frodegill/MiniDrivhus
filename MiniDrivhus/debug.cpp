@@ -12,7 +12,7 @@ void Debug::enable()
   if (!enabled)
   {
     enabled = true;
-    if (debug_mode==DEBUG_SERIAL)
+    if (debug_mode!=DEBUG_NONE)
     {
       Serial.begin(9600);
     }
@@ -24,7 +24,7 @@ void Debug::disable()
   if (enabled)
   {
     enabled = false;
-    if (debug_mode==DEBUG_SERIAL)
+    if (debug_mode!=DEBUG_NONE)
     {
       Serial.flush();
       Serial.end();
@@ -40,11 +40,14 @@ void Debug::print(const char* msg)
     {
       Serial.println(msg);
     }
-    else if (debug_mode==DEBUG_MQTT && g_mqtt.mqtt_enabled)
+    else if (debug_mode==DEBUG_MQTT && g_mqtt.isEnabled())
     {
       if (g_mqtt.connectMQTT())
       {
-        Serial.println((String("MQTT publish returned ") + String(g_mqtt.mqtt_client->publish((String(g_settings.mqtt_sensorid_param)+F(MQTT_DEBUG_TOPIC)).c_str(), msg)?"true":"false")).c_str());
+        if (!g_mqtt.mqtt_client->publish((String(g_settings.mqtt_sensorid_param)+F(MQTT_DEBUG_TOPIC)).c_str(), msg))
+        {
+          Serial.println("MQTT publish returned false");
+        }
       }
       else
       {
