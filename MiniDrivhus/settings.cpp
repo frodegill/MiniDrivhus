@@ -19,6 +19,15 @@ Settings::Settings()
   server = std::make_shared<ESP8266WebServer>(80);
   apIP = std::make_shared<IPAddress>(192, 168, 4, 1);
   ssid_param[0] = password_param[0] = mqtt_servername_param[0] = mqtt_sensorid_param[0] = mqtt_username_param[0] = mqtt_password_param[0] = 0;
+
+  conf_sec_between_reading = DEFAULT_CONF_SEC_BETWEEN_READING;
+  conf_plant_count = MAX_PLANT_COUNT;
+  for (byte i=0; i<MAX_PLANT_COUNT; i++)
+  {
+    conf_watering_trigger_value[i] = DEFAULT_CONF_WATERING_TRIGGER_VALUE;
+    conf_watering_duration_ms[i] = DEFAULT_CONF_WATERING_DURATION_MS;
+    conf_watering_grace_period_sec[i] = DEFAULT_CONF_WATERING_GRACE_PERIOD_SEC;
+  }
 }
 
 void Settings::enable()
@@ -115,6 +124,7 @@ void Settings::handleNotFound()
 
 void Settings::handleSetupRoot()
 {
+  DEBUG_MSG("start settings::handleSetupRoot");
   if (server->hasArg("ssid") || server->hasArg("password")
       || server->hasArg("mqtt_server") || server->hasArg("mqtt_port") || server->hasArg("mqtt_id") || server->hasArg("mqtt_username") || server->hasArg("mqtt_password"))
   {
@@ -213,6 +223,7 @@ void Settings::handleSetupRoot()
 
 void Settings::activateSetupAP()
 {
+  DEBUG_MSG("start settings::activateSetupAP");
   WiFi.softAP(SETUP_SSID);
   dnsServer.start(DNS_PORT, "*", *apIP.get());
   
@@ -223,20 +234,21 @@ void Settings::activateSetupAP()
 
 void Settings::activateWifi()
 {
+  DEBUG_MSG("start settings::activateWifi");
   readPersistentParams();
   
-  g_debug.print("Connecting to WiFi");
+  DEBUG_MSG("Connecting to WiFi");
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid_param, password_param);
   while (WiFi.status() != WL_CONNECTED)
   {
     delay(500);
   }
-  g_debug.print("WiFi connected");
+  DEBUG_MSG("WiFi connected");
 
   if (g_mqtt.isRequested())
   {
-    g_debug.print("Initializing MQTT");
+    DEBUG_MSG("Initializing MQTT");
     g_mqtt.initialize();
   }
 }

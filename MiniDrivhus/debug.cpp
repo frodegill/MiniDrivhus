@@ -1,5 +1,7 @@
 #include "debug.h"
 
+#ifdef DEBUG_SUPPORT
+
 #include <HardwareSerial.h>
 
 #include "global.h"
@@ -44,10 +46,7 @@ void Debug::print(const char* msg)
     {
       if (g_mqtt.connectMQTT())
       {
-        if (!g_mqtt.mqtt_client->publish((String(g_settings.mqtt_sensorid_param)+F(MQTT_DEBUG_TOPIC)).c_str(), msg))
-        {
-          Serial.println("MQTT publish returned false");
-        }
+        g_mqtt.publishMQTTValue((String(g_settings.mqtt_sensorid_param)+F(MQTT_DEBUG_TOPIC)).c_str(), msg);
       }
       else
       {
@@ -56,3 +55,5 @@ void Debug::print(const char* msg)
     }
   }
 }
+
+#endif // DEBUG_SUPPORT

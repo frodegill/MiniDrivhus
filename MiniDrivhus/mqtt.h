@@ -5,15 +5,14 @@
 #include <PubSubClient.h>
 
 
-void mqttCallback(char* topic, byte* payload, unsigned int length);
+void globalMQTTCallback(char* topic, byte* payload, unsigned int length);
 
 class MQTT
 {
 public:
-  MQTT();
-  void mqttCallback(char* topic, byte* payload, unsigned int length);
-  void publishMQTTValue(const String& topic, const String& msg);
-  void publishMQTTValue(const String& topic, float value);
+  void callback(char* topic, byte* payload, unsigned int length);
+  bool publishMQTTValue(const String& topic, const String& msg);
+  bool publishMQTTValue(const String& topic, float value);
   bool connectMQTT();
   bool isRequested();
   void initialize();
@@ -26,7 +25,7 @@ private:
 
 public:
   WiFiClient esp_client;
-  std::shared_ptr<PubSubClient> mqtt_client;
+  PubSubClient mqtt_client;
 };
 
 #endif // _MQTT_H_

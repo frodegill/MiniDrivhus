@@ -28,8 +28,8 @@ public:
   static constexpr uint16_t MQTT_DEFAULT_PORT = 1883;
 
   static constexpr unsigned int DEFAULT_CONF_SEC_BETWEEN_READING       = 5; //secoonds min. time between sensor activation
-  static constexpr unsigned int DEFAULT_CONF_WATERING_TRIGGER_VALUE    = 50; //[0..100]
-  static constexpr unsigned int DEFAULT_CONF_WATERING_DURATION_MS      = 5*1000; //ms to keep watering
+  static constexpr uint16_t DEFAULT_CONF_WATERING_TRIGGER_VALUE        = 80.0f; //[0.0 - 100.0]
+  static constexpr unsigned int DEFAULT_CONF_WATERING_DURATION_MS      = 3*1000; //ms to keep watering
   static constexpr unsigned int DEFAULT_CONF_WATERING_GRACE_PERIOD_SEC = 20*60; //sec min. time between watering
   static constexpr const char* DEFAULT_SENSORID = "/MiniDrivhus/Sensor1/";
 
@@ -66,7 +66,7 @@ public:
 
   unsigned int conf_sec_between_reading;
   byte conf_plant_count = MAX_PLANT_COUNT;
-  byte conf_watering_trigger_value[MAX_PLANT_COUNT];
+  float conf_watering_trigger_value[MAX_PLANT_COUNT];
   unsigned int conf_watering_duration_ms[MAX_PLANT_COUNT];
   unsigned int conf_watering_grace_period_sec[MAX_PLANT_COUNT];
 };
