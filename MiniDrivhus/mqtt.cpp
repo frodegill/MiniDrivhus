@@ -5,6 +5,8 @@
 #include "settings.h"
 
 
+extern volatile bool plant_water_requested[MAX_PLANT_COUNT];
+
 void globalMQTTCallback(char* topic, byte* payload, unsigned int length)
 {
   //DEBUG_MSG("start mqtt callback");
@@ -27,7 +29,25 @@ void MQTT::callback(char* topic, byte* payload, unsigned int length)
 
   const char* key = topic + strlen(g_settings.mqtt_sensorid_param);
 
-  if (0 == strcmp("config/sec_between_reading", key))
+  if (0 == strncmp("plant", key, 5))
+  {
+    key += 5;
+    byte plantno = 0;
+    while (*key>='0' && *key<='9')
+    {
+      plantno = plantno*10 + (*key++-'0');
+    }
+
+    if (plantno <= MAX_PLANT_COUNT && *key++=='/')
+    {
+      if (0 == strcmp("water_now", key))
+      {
+        plant_water_requested[plantno] = true;
+        DEBUG_MSG((String("mqttCallback request water plant=")+String((int)plantno)).c_str());
+      }
+    }
+  }
+  else if (0 == strcmp("config/sec_between_reading", key))
   {
     g_settings.conf_sec_between_reading = max(1, atoi(value.c_str()));
     DEBUG_MSG((String("mqttCallback conf_sec_between_reading=")+String((int)g_settings.conf_sec_between_reading)).c_str());
@@ -130,21 +150,27 @@ bool MQTT::connectMQTT()
       byte i;
       for (i=0; i<MAX_PLANT_COUNT; i++)
       {
-        String plant = F("config/plant");
+        String config = F("config/");
+        
+        String plant = F("plant");
         plant += String(i);
         plant += F("/");
         
-        topic = String(g_settings.mqtt_sensorid_param)+plant+F("watering_trigger_value");
+        topic = String(g_settings.mqtt_sensorid_param)+config+plant+F("watering_trigger_value");
         DEBUG_MSG((String("Subscribing to ") + topic).c_str());
-        subscribe_ok &= mqtt_client.subscribe((String(g_settings.mqtt_sensorid_param)+plant+F("watering_trigger_value")).c_str());
+        subscribe_ok &= mqtt_client.subscribe(topic.c_str());
 
-        topic = String(g_settings.mqtt_sensorid_param)+plant+F("watering_duration_ms");
+        topic = String(g_settings.mqtt_sensorid_param)+config+plant+F("watering_duration_ms");
         DEBUG_MSG((String("Subscribing to ") + topic).c_str());
-        subscribe_ok &= mqtt_client.subscribe((String(g_settings.mqtt_sensorid_param)+plant+F("watering_duration_ms")).c_str());
+        subscribe_ok &= mqtt_client.subscribe(topic.c_str());
 
-        topic = String(g_settings.mqtt_sensorid_param)+plant+F("watering_grace_period_sec");
+        topic = String(g_settings.mqtt_sensorid_param)+config+plant+F("watering_grace_period_sec");
         DEBUG_MSG((String("Subscribing to ") + topic).c_str());
-        subscribe_ok &= mqtt_client.subscribe((String(g_settings.mqtt_sensorid_param)+plant+F("watering_grace_period_sec")).c_str());
+        subscribe_ok &= mqtt_client.subscribe(topic.c_str());
+
+        topic = String(g_settings.mqtt_sensorid_param)+plant+F("water_now");
+        DEBUG_MSG((String("Subscribing to ") + topic).c_str());
+        subscribe_ok &= mqtt_client.subscribe(topic.c_str());
       }
 
       DEBUG_MSG((String("MQTT topics subscribed ") + String(subscribe_ok ? "ok" : "with error")).c_str());

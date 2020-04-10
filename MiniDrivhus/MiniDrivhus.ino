@@ -14,8 +14,9 @@
  minidrivhus/<sensorid>/light
  minidrivhus/<sensorid>/temp
  minidrivhus/<sensorid>/humidity
- minidrivhus/<sensorid>/plant[1..n]/moisture
- minidrivhus/<sensorid>/plant[1..n]/watering_count
+ minidrivhus/<sensorid>/plant[0..(n-1)]/moisture
+ minidrivhus/<sensorid>/plant[0..(n-1)]/watering_count
+ minidrivhus/<sensorid>/plant[0..(n-1)]/water_now
  minidrivhus/<sensorid>/config/sec_between_reading
  minidrivhus/<sensorid>/config/plant_count                                [1 - 2]
  minidrivhus/<sensorid>/config/plant[0..(n-1)]/watering_trigger_value     [0.0 - 100.0]
@@ -68,10 +69,10 @@ volatile bool should_read_temp_sensor;
 volatile float plant_sensor_value[2][MAX_PLANT_COUNT];
 volatile uint16_t plant_watering_count[2][MAX_PLANT_COUNT];
 volatile unsigned long previous_plant_watering_time[MAX_PLANT_COUNT];
+volatile bool plant_water_requested[MAX_PLANT_COUNT];
 volatile float lightsensor_value[2];
 float tempsensor_value[2];
 float humiditysensor_value[2];
-
 
 
 void selectAnalogAddr(byte addr)
@@ -109,6 +110,7 @@ void onTick()
         //DEBUG_MSG((String("onTick - read sensor ")+String((int)plant)+String(", got ")+String((int)plant_sensor_value[CURRENT][plant])).c_str());
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
         state = (plant==0) ? ACTIVATE_PLANT_WATERING_1 : ACTIVATE_PLANT_WATERING_2;
+
         break;
       }
 
@@ -116,7 +118,8 @@ void onTick()
     case ACTIVATE_PLANT_WATERING_2:
       {
         byte plant = (state==ACTIVATE_PLANT_WATERING_1)?0:1;
-        if (plant_sensor_value[CURRENT][plant] >= g_settings.conf_watering_trigger_value[plant])
+        if (plant_water_requested[plant] ||
+            (plant_sensor_value[CURRENT][plant] >= g_settings.conf_watering_trigger_value[plant]))
         {
           unsigned long current_sec = millis()/1000;
           if (current_sec < previous_plant_watering_time[plant]) //Wrapped. Happens every ~50 days
@@ -124,20 +127,21 @@ void onTick()
             previous_plant_watering_time[plant] = current_sec;
           }
           
-          if (previous_plant_watering_time[plant]+g_settings.conf_watering_grace_period_sec[plant] >= current_sec)
-          {
-            DEBUG_MSG((String("onTick - skipping activate watering ")+String((int)plant)+String(" (in ")+String((unsigned long)(current_sec-previous_plant_watering_time[plant]))+String(" of ")+String((int)g_settings.conf_watering_grace_period_sec[plant])+String(" sec grace period")).c_str());
-            ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-            state = (plant==0 && g_settings.conf_plant_count>1) ? ACTIVATE_PLANT_SENSOR_2 : ACTIVATE_LIGHTSENSOR;
-          }
-          else
+          if (plant_water_requested[plant] || (previous_plant_watering_time[plant]+g_settings.conf_watering_grace_period_sec[plant] < current_sec))
           {
             DEBUG_MSG((String("onTick - activate watering ")+String((int)plant)).c_str());
             digitalWrite(O_PLANT_WATERING_PINS[plant], HIGH);
             plant_watering_count[CURRENT][plant]++;
             previous_plant_watering_time[plant] = current_sec;
+            plant_water_requested[plant] = false;
             ticker.attach_ms(g_settings.conf_watering_duration_ms[plant], onTick);
             state = (plant==0) ? DEACTIVATE_PLANT_WATERING_1 : DEACTIVATE_PLANT_WATERING_2;
+          }
+          else
+          {
+            DEBUG_MSG((String("onTick - skipping activate watering ")+String((int)plant)+String(" (in ")+String((unsigned long)(current_sec-previous_plant_watering_time[plant]))+String(" of ")+String((int)g_settings.conf_watering_grace_period_sec[plant])+String(" sec grace period")).c_str());
+            ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
+            state = (plant==0 && g_settings.conf_plant_count>1) ? ACTIVATE_PLANT_SENSOR_2 : ACTIVATE_LIGHTSENSOR;
           }
         }
         else
@@ -273,6 +277,7 @@ void setup()
       plant_sensor_value[CURRENT][i] = plant_sensor_value[OLD][i] = 0.0f;
       plant_watering_count[CURRENT][i] = plant_watering_count[OLD][i] = 0;
       previous_plant_watering_time[i] = 0;
+      plant_water_requested[i] = false;
     }
     lightsensor_value[CURRENT] = lightsensor_value[OLD] = 0.0f;
     tempsensor_value[CURRENT] = tempsensor_value[OLD] = 0.0f;
