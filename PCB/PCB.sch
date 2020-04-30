@@ -292,7 +292,7 @@ U 1 1 5E2B2DDA
 P 4150 2600
 F 0 "Q1" H 4341 2646 50  0000 L CNN
 F 1 "BC337" H 4341 2555 50  0000 L CNN
-F 2 "Package_TO_SOT_THT:TO-92_Inline" H 4350 2525 50  0001 L CIN
+F 2 "Package_TO_SOT_THT:TO-92_HandSolder" H 4350 2525 50  0001 L CIN
 F 3 "https://diotec.com/tl_files/diotec/files/pdf/datasheets/bc337.pdf" H 4150 2600 50  0001 L CNN
 	1    4150 2600
 	1    0    0    -1  
@@ -342,7 +342,7 @@ U 1 1 5E2B3632
 P 5800 5300
 F 0 "Q2" H 5991 5346 50  0000 L CNN
 F 1 "BC337" H 5991 5255 50  0000 L CNN
-F 2 "Package_TO_SOT_THT:TO-92_Inline" H 6000 5225 50  0001 L CIN
+F 2 "Package_TO_SOT_THT:TO-92_HandSolder" H 6000 5225 50  0001 L CIN
 F 3 "https://diotec.com/tl_files/diotec/files/pdf/datasheets/bc337.pdf" H 5800 5300 50  0001 L CNN
 	1    5800 5300
 	1    0    0    -1  
@@ -454,7 +454,6 @@ F 3 "" H 5600 3250 50  0001 C CNN
 $EndComp
 NoConn ~ 8950 5150
 NoConn ~ 8950 5050
-NoConn ~ 8950 3650
 NoConn ~ 5050 1700
 NoConn ~ 6600 4550
 $Comp
@@ -550,7 +549,7 @@ U 1 1 5E2B2E52
 P 6600 2600
 F 0 "Q3" H 6791 2646 50  0000 L CNN
 F 1 "BC337" H 6791 2555 50  0000 L CNN
-F 2 "Package_TO_SOT_THT:TO-92_Inline" H 6800 2525 50  0001 L CIN
+F 2 "Package_TO_SOT_THT:TO-92_HandSolder" H 6800 2525 50  0001 L CIN
 F 3 "https://diotec.com/tl_files/diotec/files/pdf/datasheets/bc337.pdf" H 6600 2600 50  0001 L CNN
 	1    6600 2600
 	1    0    0    -1  
@@ -660,7 +659,7 @@ U 1 1 5EA1F269
 P 8700 2500
 F 0 "Q4" H 8891 2546 50  0000 L CNN
 F 1 "BC337" H 8891 2455 50  0000 L CNN
-F 2 "Package_TO_SOT_THT:TO-92_Inline" H 8900 2425 50  0001 L CIN
+F 2 "Package_TO_SOT_THT:TO-92_HandSolder" H 8900 2425 50  0001 L CIN
 F 3 "https://diotec.com/tl_files/diotec/files/pdf/datasheets/bc337.pdf" H 8700 2500 50  0001 L CNN
 	1    8700 2500
 	1    0    0    -1  
@@ -779,6 +778,7 @@ F 3 "~" H 2400 4100 50  0001 C CNN
 $EndComp
 Wire Wire Line
 	8950 3850 8250 2800
+NoConn ~ 8950 3750
 Wire Wire Line
-	8950 3750 5400 5600
+	8950 3650 5400 5600
 $EndSCHEMATC
