@@ -232,7 +232,7 @@ void Settings::activateSetupAP()
   server->begin();
 }
 
-void Settings::activateWifi()
+bool Settings::activateWifi()
 {
   DEBUG_MSG("start settings::activateWifi");
   readPersistentParams();
@@ -240,9 +240,11 @@ void Settings::activateWifi()
   DEBUG_MSG("Connecting to WiFi");
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid_param, password_param);
+  byte i = 0;
   while (WiFi.status() != WL_CONNECTED)
   {
-    delay(500);
+    if (++i >= 60) return false; //Try a maximum of 30sek (60*500ms)
+    delay(500);    
   }
   DEBUG_MSG("WiFi connected");
 
@@ -251,6 +253,7 @@ void Settings::activateWifi()
     DEBUG_MSG("Initializing MQTT");
     g_mqtt.initialize();
   }
+  return true;
 }
 
 void Settings::processNetwork(bool setup_mode)

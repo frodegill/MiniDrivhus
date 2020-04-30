@@ -18,7 +18,7 @@
  minidrivhus/<sensorid>/plant[0..(n-1)]/watering_count
  minidrivhus/<sensorid>/plant[0..(n-1)]/water_now
  minidrivhus/<sensorid>/config/sec_between_reading
- minidrivhus/<sensorid>/config/plant_count                                [1 - 2]
+ minidrivhus/<sensorid>/config/plant_count                                [1 - 3]
  minidrivhus/<sensorid>/config/plant[0..(n-1)]/watering_trigger_value     [0.0 - 100.0]
  minidrivhus/<sensorid>/config/plant[0..(n-1)]/watering_duration_ms
  minidrivhus/<sensorid>/config/plant[0..(n-1)]/watering_grace_period_sec
@@ -44,6 +44,11 @@ enum State {
   READ_PLANT_SENSOR_2,
   ACTIVATE_PLANT_WATERING_2,
   DEACTIVATE_PLANT_WATERING_2,
+
+  ACTIVATE_PLANT_SENSOR_3,
+  READ_PLANT_SENSOR_3,
+  ACTIVATE_PLANT_WATERING_3,
+  DEACTIVATE_PLANT_WATERING_3,
 
   ACTIVATE_LIGHTSENSOR,
   READ_LIGHTSENSOR,
@@ -75,6 +80,20 @@ float tempsensor_value[2];
 float humiditysensor_value[2];
 
 
+byte whichOf(const volatile State& state, const State& /*o1_default*/, const State& o2, const State& o3)
+{
+  if (state==o2) return 1;
+  else if (state==o3) return 2;
+  else return 0;
+}
+
+State nextState(byte plant, const State& o1, const State& o2, const State& o3)
+{
+  if (plant==1) return o2;
+  else if (plant==2) return o3;
+  else return o1;
+}
+
 void selectAnalogAddr(byte addr)
 {
   digitalWrite(O_ANALOG_ADDR_S0, (addr&0x01)==0?LOW:HIGH);
@@ -94,30 +113,32 @@ void onTick()
 
     case ACTIVATE_PLANT_SENSOR_1:
     case ACTIVATE_PLANT_SENSOR_2:
+    case ACTIVATE_PLANT_SENSOR_3:
       {
-        byte plant = (state==ACTIVATE_PLANT_SENSOR_1)?0:1;
+        byte plant = whichOf(state, ACTIVATE_PLANT_SENSOR_1, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3);
         selectAnalogAddr(ANALOG_PLANT_SENSOR_ADDR[plant]);
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-        state = (plant==0) ? READ_PLANT_SENSOR_1 : READ_PLANT_SENSOR_2;
+        state = nextState(plant, READ_PLANT_SENSOR_1, READ_PLANT_SENSOR_2, READ_PLANT_SENSOR_3);
         break;
       }
 
     case READ_PLANT_SENSOR_1:
     case READ_PLANT_SENSOR_2:
+    case READ_PLANT_SENSOR_3:
       {
-        byte plant = (state==READ_PLANT_SENSOR_1)?0:1;
+        byte plant = whichOf(state, READ_PLANT_SENSOR_1, READ_PLANT_SENSOR_2, READ_PLANT_SENSOR_3);
         plant_sensor_value[CURRENT][plant] = max(0.0f, min(100.0f, 100.0f*static_cast<float>(analogRead(A0))/static_cast<float>(MAX_ANALOG_VALUE)));
         //DEBUG_MSG((String("onTick - read sensor ")+String((int)plant)+String(", got ")+String((int)plant_sensor_value[CURRENT][plant])).c_str());
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-        state = (plant==0) ? ACTIVATE_PLANT_WATERING_1 : ACTIVATE_PLANT_WATERING_2;
-
+        state = nextState(plant, ACTIVATE_PLANT_WATERING_1, ACTIVATE_PLANT_WATERING_2, ACTIVATE_PLANT_WATERING_3);
         break;
       }
 
     case ACTIVATE_PLANT_WATERING_1:
     case ACTIVATE_PLANT_WATERING_2:
+    case ACTIVATE_PLANT_WATERING_3:
       {
-        byte plant = (state==ACTIVATE_PLANT_WATERING_1)?0:1;
+        byte plant = whichOf(state, ACTIVATE_PLANT_WATERING_1, ACTIVATE_PLANT_WATERING_2, ACTIVATE_PLANT_WATERING_3);
         if (plant_water_requested[plant] ||
             (plant_sensor_value[CURRENT][plant] >= g_settings.conf_watering_trigger_value[plant]))
         {
@@ -135,20 +156,20 @@ void onTick()
             previous_plant_watering_time[plant] = current_sec;
             plant_water_requested[plant] = false;
             ticker.attach_ms(g_settings.conf_watering_duration_ms[plant], onTick);
-            state = (plant==0) ? DEACTIVATE_PLANT_WATERING_1 : DEACTIVATE_PLANT_WATERING_2;
+            state = nextState(plant, DEACTIVATE_PLANT_WATERING_1, DEACTIVATE_PLANT_WATERING_2, DEACTIVATE_PLANT_WATERING_3);
           }
           else
           {
             DEBUG_MSG((String("onTick - skipping activate watering ")+String((int)plant)+String(" (in ")+String((unsigned long)(current_sec-previous_plant_watering_time[plant]))+String(" of ")+String((int)g_settings.conf_watering_grace_period_sec[plant])+String(" sec grace period")).c_str());
             ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-            state = (plant==0 && g_settings.conf_plant_count>1) ? ACTIVATE_PLANT_SENSOR_2 : ACTIVATE_LIGHTSENSOR;
+            state = ((plant+1)<g_settings.conf_plant_count) ? nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR) : ACTIVATE_LIGHTSENSOR;
           }
         }
         else
         {
           DEBUG_MSG((String("onTick - activate watering ")+String((int)plant)+String(" ignored, ")+String(plant_sensor_value[CURRENT][plant], 4)+String(" < ")+String(g_settings.conf_watering_trigger_value[plant], 4)).c_str());
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-          state = (plant==0 && g_settings.conf_plant_count>1) ? ACTIVATE_PLANT_SENSOR_2 : ACTIVATE_LIGHTSENSOR;
+          state = ((plant+1)<g_settings.conf_plant_count) ? nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR) : ACTIVATE_LIGHTSENSOR;
         }
 
         break;
@@ -156,12 +177,13 @@ void onTick()
 
     case DEACTIVATE_PLANT_WATERING_1:
     case DEACTIVATE_PLANT_WATERING_2:
+    case DEACTIVATE_PLANT_WATERING_3:
       {
-        byte plant = (state==DEACTIVATE_PLANT_WATERING_1)?0:1;
+        byte plant = whichOf(state, DEACTIVATE_PLANT_WATERING_1, DEACTIVATE_PLANT_WATERING_2, DEACTIVATE_PLANT_WATERING_3);
         DEBUG_MSG((String("onTick - deactivate watering ")+String((int)plant)).c_str());
         digitalWrite(O_PLANT_WATERING_PINS[plant], LOW);
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-        state = (plant==0 && g_settings.conf_plant_count>1) ? ACTIVATE_PLANT_SENSOR_2 : ACTIVATE_LIGHTSENSOR;
+        state = ((plant+1)<g_settings.conf_plant_count) ? nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR) : ACTIVATE_LIGHTSENSOR;
         break;
       }
 
@@ -194,7 +216,7 @@ void onTick()
 
     case FINISHED:
       {
-        selectAnalogAddr(UNUSED_ANALOG_SENSOR_ADDR);
+        selectAnalogAddr(0);
         ticker.attach_ms(g_settings.conf_sec_between_reading*1000, onTick);
         state = START;
         break;
@@ -227,6 +249,10 @@ void updateValue(const String& topic, uint16_t new_value, volatile uint16_t& old
 
 void setup()
 {
+  Serial.end();
+  Serial1.end();
+  delay(1000);
+
 #ifdef DEBUG_SUPPORT
   g_debug.enable();
   DEBUG_MSG("start setup");
@@ -248,8 +274,6 @@ void setup()
   {
     DEBUG_MSG("Mode = NORMAL");
 
-    g_settings.activateWifi();
-
     pinMode(I_TEMPHUMIDSENSOR_PIN, OUTPUT); //DHT handles this pin itself, but it should be OUTPUT before setup
     dht.setup(I_TEMPHUMIDSENSOR_PIN, DHT_MODEL);
 
@@ -270,7 +294,7 @@ void setup()
       digitalWrite(O_PLANT_WATERING_PINS[i], LOW);
     }
     digitalWrite(O_LIGHT_RELAY_ACTIVATE_PIN, LOW);
-    selectAnalogAddr(UNUSED_ANALOG_SENSOR_ADDR);
+    selectAnalogAddr(0);
 
     for (i=0; i<MAX_PLANT_COUNT; i++)
     {
@@ -283,6 +307,11 @@ void setup()
     tempsensor_value[CURRENT] = tempsensor_value[OLD] = 0.0f;
     humiditysensor_value[CURRENT] = humiditysensor_value[OLD] = 0.0f;
     should_read_temp_sensor = false;
+
+    if (!g_settings.activateWifi())
+    {
+      // reset?
+    }
 
     //Make some noise to say we're alive!
     for (i=0; i<4; i++)

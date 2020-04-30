@@ -45,7 +45,7 @@ public:
   void handleNotFound();
   void handleSetupRoot();
   void activateSetupAP();
-  void activateWifi();
+  bool activateWifi();
   void processNetwork(bool setup_mode);
   
 public:
@@ -65,7 +65,7 @@ public:
   char mqtt_password_param[MAX_MQTT_PASSWORD_LENGTH+1];
 
   unsigned int conf_sec_between_reading;
-  byte conf_plant_count = MAX_PLANT_COUNT;
+  byte conf_plant_count;
   float conf_watering_trigger_value[MAX_PLANT_COUNT];
   unsigned int conf_watering_duration_ms[MAX_PLANT_COUNT];
   unsigned int conf_watering_grace_period_sec[MAX_PLANT_COUNT];
