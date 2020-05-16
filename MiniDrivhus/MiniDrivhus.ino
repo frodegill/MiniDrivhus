@@ -1,10 +1,10 @@
 #include "global.h"
 
-#include "debug.h"
+#include "log.h"
 #include "mqtt.h"
 #include "settings.h"
 
-#include <DHTesp.h>           // Library: DHT_sensor_library_fror_ESPx
+#include <DHTesp.h>           // Library: DHT_sensor_library_for_ESPx
 #include <Ticker.h>
 
 
@@ -59,9 +59,9 @@ enum State {
 };
 
 
-#ifdef DEBUG_SUPPORT
-  Debug g_debug;
-#endif // DEBUG_SUPPORT
+#if (LOG_LEVEL>LOG_LEVEL_NONE)
+  Log g_log;
+#endif // (LOG_LEVEL>LOG_LEVEL_NONE)
 MQTT g_mqtt;
 Settings g_settings;
 DHTesp dht;
@@ -87,11 +87,11 @@ byte whichOf(const volatile State& state, const State& /*o1_default*/, const Sta
   else return 0;
 }
 
-State nextState(byte plant, const State& o1, const State& o2, const State& o3)
+State nextState(byte plant, const State& o1_default, const State& o2, const State& o3)
 {
   if (plant==1) return o2;
   else if (plant==2) return o3;
-  else return o1;
+  else return o1_default;
 }
 
 void selectAnalogAddr(byte addr)
@@ -128,7 +128,7 @@ void onTick()
       {
         byte plant = whichOf(state, READ_PLANT_SENSOR_1, READ_PLANT_SENSOR_2, READ_PLANT_SENSOR_3);
         plant_sensor_value[CURRENT][plant] = max(0.0f, min(100.0f, 100.0f*static_cast<float>(analogRead(A0))/static_cast<float>(MAX_ANALOG_VALUE)));
-        //DEBUG_MSG((String("onTick - read sensor ")+String((int)plant)+String(", got ")+String((int)plant_sensor_value[CURRENT][plant])).c_str());
+        //LOG_DEBUG((String("onTick - read sensor ")+String((int)plant)+String(", got ")+String((int)plant_sensor_value[CURRENT][plant])).c_str());
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
         state = nextState(plant, ACTIVATE_PLANT_WATERING_1, ACTIVATE_PLANT_WATERING_2, ACTIVATE_PLANT_WATERING_3);
         break;
@@ -139,6 +139,7 @@ void onTick()
     case ACTIVATE_PLANT_WATERING_3:
       {
         byte plant = whichOf(state, ACTIVATE_PLANT_WATERING_1, ACTIVATE_PLANT_WATERING_2, ACTIVATE_PLANT_WATERING_3);
+        LOG_DEBUG((String("onTick - activate watering: ")+String((int)plant)+String(" ")+String(plant_sensor_value[CURRENT][plant], 4)+String(", ")+String(g_settings.conf_watering_trigger_value[plant], 4) + String(plant_water_requested[plant] ? " requested" : " not requested")).c_str());
         if (plant_water_requested[plant] ||
             (plant_sensor_value[CURRENT][plant] >= g_settings.conf_watering_trigger_value[plant]))
         {
@@ -150,7 +151,7 @@ void onTick()
           
           if (plant_water_requested[plant] || (previous_plant_watering_time[plant]+g_settings.conf_watering_grace_period_sec[plant] < current_sec))
           {
-            DEBUG_MSG((String("onTick - activate watering ")+String((int)plant)).c_str());
+            LOG_DEBUG((String("onTick - activate watering ")+String((int)plant)).c_str());
             digitalWrite(O_PLANT_WATERING_PINS[plant], HIGH);
             plant_watering_count[CURRENT][plant]++;
             previous_plant_watering_time[plant] = current_sec;
@@ -160,14 +161,14 @@ void onTick()
           }
           else
           {
-            DEBUG_MSG((String("onTick - skipping activate watering ")+String((int)plant)+String(" (in ")+String((unsigned long)(current_sec-previous_plant_watering_time[plant]))+String(" of ")+String((int)g_settings.conf_watering_grace_period_sec[plant])+String(" sec grace period")).c_str());
+            LOG_DEBUG((String("onTick - skipping activate watering ")+String((int)plant)+String(" (in ")+String((unsigned long)(current_sec-previous_plant_watering_time[plant]))+String(" of ")+String((int)g_settings.conf_watering_grace_period_sec[plant])+String(" sec grace period")).c_str());
             ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
             state = ((plant+1)<g_settings.conf_plant_count) ? nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR) : ACTIVATE_LIGHTSENSOR;
           }
         }
         else
         {
-          DEBUG_MSG((String("onTick - activate watering ")+String((int)plant)+String(" ignored, ")+String(plant_sensor_value[CURRENT][plant], 4)+String(" < ")+String(g_settings.conf_watering_trigger_value[plant], 4)).c_str());
+          LOG_DEBUG((String("onTick - activate watering ")+String((int)plant)+String(" ignored, ")+String(plant_sensor_value[CURRENT][plant], 4)+String(" < ")+String(g_settings.conf_watering_trigger_value[plant], 4)).c_str());
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
           state = ((plant+1)<g_settings.conf_plant_count) ? nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR) : ACTIVATE_LIGHTSENSOR;
         }
@@ -180,7 +181,7 @@ void onTick()
     case DEACTIVATE_PLANT_WATERING_3:
       {
         byte plant = whichOf(state, DEACTIVATE_PLANT_WATERING_1, DEACTIVATE_PLANT_WATERING_2, DEACTIVATE_PLANT_WATERING_3);
-        DEBUG_MSG((String("onTick - deactivate watering ")+String((int)plant)).c_str());
+        LOG_DEBUG((String("onTick - deactivate watering ")+String((int)plant)).c_str());
         digitalWrite(O_PLANT_WATERING_PINS[plant], LOW);
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
         state = ((plant+1)<g_settings.conf_plant_count) ? nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR) : ACTIVATE_LIGHTSENSOR;
@@ -199,7 +200,7 @@ void onTick()
       {
         int value = max(0, min(static_cast<int>(MAX_ANALOG_VALUE), analogRead(A0)));
         lightsensor_value[CURRENT] = 100.0f - 100.0f*static_cast<float>(value)/static_cast<float>(MAX_ANALOG_VALUE);
-        //DEBUG_MSG((String("onTick - light sensor. Read value ")+String((int)lightsensor_value[CURRENT])).c_str());
+        //LOG_DEBUG((String("onTick - light sensor. Read value ")+String((int)lightsensor_value[CURRENT])).c_str());
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
         state = READ_TEMPHUMIDSENSOR;
         break;
@@ -224,7 +225,7 @@ void onTick()
     
     default:
       {
-        DEBUG_MSG("Unknown state");
+        LOG_ERROR("Unknown state");
       }
   }
 }
@@ -253,10 +254,10 @@ void setup()
   Serial1.end();
   delay(1000);
 
-#ifdef DEBUG_SUPPORT
-  g_debug.enable();
-  DEBUG_MSG("start setup");
-#endif // DEBUG_SUPPORT
+#if (LOG_LEVEL>LOG_LEVEL_NONE)
+  g_log.enable();
+  LOG_INFO("start setup");
+#endif // (LOG_LEVEL>LOG_LEVEL_NONE)
 
   g_settings.enable();
   
@@ -265,14 +266,14 @@ void setup()
 
   if (LOW == digitalRead(I_SETUP_MODE_PIN))
   {
-    DEBUG_MSG("Mode = SETUP");
+    LOG_INFO("Mode = SETUP");
 
     state = SETUP_MODE;
     g_settings.activateSetupAP();
   }
   else
   {
-    DEBUG_MSG("Mode = NORMAL");
+    LOG_INFO("Mode = NORMAL");
 
     pinMode(I_TEMPHUMIDSENSOR_PIN, OUTPUT); //DHT handles this pin itself, but it should be OUTPUT before setup
     dht.setup(I_TEMPHUMIDSENSOR_PIN, DHT_MODEL);
@@ -323,7 +324,7 @@ void setup()
     }
     
     state = START;
-    DEBUG_MSG((String("state=START, plant_count=")+String((int)g_settings.conf_plant_count)).c_str());
+    LOG_DEBUG((String("state=START, plant_count=")+String((int)g_settings.conf_plant_count)).c_str());
     onTick();
   }
 }
@@ -346,14 +347,14 @@ void loop()
         should_read_temp_sensor = false;
         tempsensor_value[CURRENT] = temp_and_humidity.temperature;
         humiditysensor_value[CURRENT] = temp_and_humidity.humidity;
-        //DEBUG_MSG((String("reading temp ")+String((int)tempsensor_value[CURRENT])+String(" and humidity ")+String((int)humiditysensor_value[CURRENT])).c_str());
+        //LOG_DEBUG((String("reading temp ")+String((int)tempsensor_value[CURRENT])+String(" and humidity ")+String((int)humiditysensor_value[CURRENT])).c_str());
 
         updateValue(F("temp"), tempsensor_value[CURRENT], tempsensor_value[OLD]);
         updateValue(F("humidity"), humiditysensor_value[CURRENT], humiditysensor_value[OLD]);
       }
       else
       {
-        DEBUG_MSG((String("reading temp and humidity failed with error ")+String((int)dht.getStatus())).c_str());
+        LOG_ERROR((String("reading temp and humidity failed with error ")+String((int)dht.getStatus())).c_str());
       }
 
       updateValue(F("light"), lightsensor_value[CURRENT], lightsensor_value[OLD]);

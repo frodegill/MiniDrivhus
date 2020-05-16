@@ -1,6 +1,6 @@
 #include "settings.h"
 
-#include "debug.h"
+#include "log.h"
 #include "mqtt.h"
 
 
@@ -124,7 +124,7 @@ void Settings::handleNotFound()
 
 void Settings::handleSetupRoot()
 {
-  DEBUG_MSG("start settings::handleSetupRoot");
+  LOG_DEBUG("start settings::handleSetupRoot");
   if (server->hasArg("ssid") || server->hasArg("password")
       || server->hasArg("mqtt_server") || server->hasArg("mqtt_port") || server->hasArg("mqtt_id") || server->hasArg("mqtt_username") || server->hasArg("mqtt_password"))
   {
@@ -223,7 +223,7 @@ void Settings::handleSetupRoot()
 
 void Settings::activateSetupAP()
 {
-  DEBUG_MSG("start settings::activateSetupAP");
+  LOG_DEBUG("start settings::activateSetupAP");
   WiFi.softAP(SETUP_SSID);
   dnsServer.start(DNS_PORT, "*", *apIP.get());
   
@@ -234,10 +234,10 @@ void Settings::activateSetupAP()
 
 bool Settings::activateWifi()
 {
-  DEBUG_MSG("start settings::activateWifi");
+  LOG_DEBUG("start settings::activateWifi");
   readPersistentParams();
   
-  DEBUG_MSG("Connecting to WiFi");
+  LOG_DEBUG("Connecting to WiFi");
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid_param, password_param);
   byte i = 0;
@@ -246,11 +246,11 @@ bool Settings::activateWifi()
     if (++i >= 60) return false; //Try a maximum of 30sek (60*500ms)
     delay(500);    
   }
-  DEBUG_MSG("WiFi connected");
+  LOG_INFO("WiFi connected");
 
   if (g_mqtt.isRequested())
   {
-    DEBUG_MSG("Initializing MQTT");
+    LOG_INFO("Initializing MQTT");
     g_mqtt.initialize();
   }
   return true;

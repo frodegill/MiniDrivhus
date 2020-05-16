@@ -22,8 +22,8 @@ static constexpr uint8_t OLD = 0;
 static constexpr uint8_t CURRENT = 1;
 
 
-class Debug;
-extern Debug g_debug;
+class Log;
+extern Log g_log;
 
 class MQTT;
 extern MQTT g_mqtt;
