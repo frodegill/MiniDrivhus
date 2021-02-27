@@ -28,6 +28,9 @@ extern Log g_log;
 class MQTT;
 extern MQTT g_mqtt;
 
+class NTP;
+extern NTP g_ntp;
+
 class Settings;
 extern Settings g_settings;
 

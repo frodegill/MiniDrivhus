@@ -2,10 +2,12 @@
 
 #include "log.h"
 #include "mqtt.h"
+#include "ntp.h"
 #include "settings.h"
 
 #include <DHTesp.h>           // Library: DHT_sensor_library_for_ESPx
 #include <Ticker.h>
+#include <TimeLib.h>
 
 
 /* PCB v4 for WeMos D1 R1
@@ -18,6 +20,7 @@
  minidrivhus/<sensorid>/plant[0..(n-1)]/watering_count
  minidrivhus/<sensorid>/plant[0..(n-1)]/water_now
  minidrivhus/<sensorid>/config/sec_between_reading
+ minidrivhus/<sensorid>/config/growlight_minutes_pr_day                   [0 . 1440]
  minidrivhus/<sensorid>/config/plant_count                                [1 - 3]
  minidrivhus/<sensorid>/config/plant[0..(n-1)]/watering_trigger_value     [0.0 - 100.0]
  minidrivhus/<sensorid>/config/plant[0..(n-1)]/watering_duration_ms
@@ -63,6 +66,8 @@ enum State {
   Log g_log;
 #endif // (LOG_LEVEL>LOG_LEVEL_NONE)
 MQTT g_mqtt;
+NTP g_ntp;
+time_t local_time;
 Settings g_settings;
 DHTesp dht;
 
@@ -78,6 +83,8 @@ volatile bool plant_water_requested[MAX_PLANT_COUNT];
 volatile float lightsensor_value[2];
 float tempsensor_value[2];
 float humiditysensor_value[2];
+
+bool growlight_lit;
 
 
 byte whichOf(const volatile State& state, const State& /*o1_default*/, const State& o2, const State& o3)
@@ -322,6 +329,7 @@ void setup()
       delay(200);
       digitalWrite(O_LIGHT_RELAY_ACTIVATE_PIN, LOW);
     }
+    growlight_lit = false;
     
     state = START;
     LOG_DEBUG((String("state=START, plant_count=")+String((int)g_settings.conf_plant_count)).c_str());
@@ -371,5 +379,21 @@ void loop()
 
     updateValue(plant_path+F("/watering_count"), plant_watering_count[CURRENT][plant], plant_watering_count[OLD][plant]);
     plant_watering_count[CURRENT][plant] = plant_watering_count[OLD][plant] = 0;
+  }
+
+  if (g_ntp.getLocalTime(local_time)) {
+    short current_minute = hour(local_time)*60 + minute(local_time);
+    LOG_INFO(String("Time is " + String((short)current_minute)).c_str());
+    short turn_on = 12*60 - g_settings.conf_growlight_minutes_pr_day/2;
+    short turn_off = 12*60 + g_settings.conf_growlight_minutes_pr_day/2;
+    if (growlight_lit && (current_minute<turn_on || current_minute>=turn_off)) {
+      digitalWrite(O_LIGHT_RELAY_ACTIVATE_PIN, LOW);
+      growlight_lit = false;
+    } else if (!growlight_lit && (current_minute>=turn_on && current_minute<turn_off)) {
+      digitalWrite(O_LIGHT_RELAY_ACTIVATE_PIN, HIGH);
+      growlight_lit = true;
+    }
+  } else {
+    LOG_INFO("Time is unknown");
   }
 }

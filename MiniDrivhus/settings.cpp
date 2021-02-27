@@ -2,6 +2,7 @@
 
 #include "log.h"
 #include "mqtt.h"
+#include "ntp.h"
 
 
 void handleNotFound()
@@ -21,6 +22,7 @@ Settings::Settings()
   ssid_param[0] = password_param[0] = mqtt_servername_param[0] = mqtt_sensorid_param[0] = mqtt_username_param[0] = mqtt_password_param[0] = 0;
 
   conf_sec_between_reading = DEFAULT_CONF_SEC_BETWEEN_READING;
+  conf_growlight_minutes_pr_day = DEFAULT_CONF_GROWLIGHT_MINUTES_PR_DAY;
   conf_plant_count = MAX_PLANT_COUNT;
   for (byte i=0; i<MAX_PLANT_COUNT; i++)
   {
@@ -253,6 +255,10 @@ bool Settings::activateWifi()
     LOG_INFO("Initializing MQTT");
     g_mqtt.initialize();
   }
+  LOG_INFO("Initializing NTP");
+  g_ntp.initialize();
+
+  LOG_INFO("WiFi activated");
   return true;
 }
 

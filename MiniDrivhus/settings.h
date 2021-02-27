@@ -31,6 +31,7 @@ public:
   static constexpr uint16_t DEFAULT_CONF_WATERING_TRIGGER_VALUE        = 80.0f; //[0.0 - 100.0]
   static constexpr unsigned int DEFAULT_CONF_WATERING_DURATION_MS      = 3*1000; //ms to keep watering
   static constexpr unsigned int DEFAULT_CONF_WATERING_GRACE_PERIOD_SEC = 20*60; //sec min. time between watering
+  static constexpr unsigned int DEFAULT_CONF_GROWLIGHT_MINUTES_PR_DAY  = 16*60; //minutes with growlight lit pr day
   static constexpr const char* DEFAULT_SENSORID = "/MiniDrivhus/Sensor1/";
 
 public:
@@ -65,6 +66,7 @@ public:
   char mqtt_password_param[MAX_MQTT_PASSWORD_LENGTH+1];
 
   unsigned int conf_sec_between_reading;
+  short conf_growlight_minutes_pr_day;
   byte conf_plant_count;
   float conf_watering_trigger_value[MAX_PLANT_COUNT];
   unsigned int conf_watering_duration_ms[MAX_PLANT_COUNT];

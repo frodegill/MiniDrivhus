@@ -52,6 +52,11 @@ void MQTT::callback(char* topic, byte* payload, unsigned int length)
     g_settings.conf_sec_between_reading = max(1, atoi(value.c_str()));
     LOG_INFO((String("mqttCallback conf_sec_between_reading=")+String((int)g_settings.conf_sec_between_reading)).c_str());
   }
+  else if (0 == strcmp("config/growlight_minutes_pr_day", key))
+  {
+    g_settings.conf_growlight_minutes_pr_day = min(60*24, max(0, atoi(value.c_str())));
+    LOG_INFO((String("mqttCallback growlight_minutes_pr_day=")+String((short)g_settings.conf_growlight_minutes_pr_day)).c_str());
+  }
   else if (0 == strcmp("config/plant_count", key))
   {
     g_settings.conf_plant_count = max(1, min(static_cast<int>(MAX_PLANT_COUNT), atoi(value.c_str())));
@@ -142,6 +147,10 @@ bool MQTT::connectMQTT()
       String topic;
       
       topic = String(g_settings.mqtt_sensorid_param)+F("config/sec_between_reading");
+      LOG_INFO((String("Subscribing to ") + topic).c_str());
+      subscribe_ok &= mqtt_client.subscribe(topic.c_str());
+
+      topic = String(g_settings.mqtt_sensorid_param)+F("config/growlight_minutes_pr_day");
       LOG_INFO((String("Subscribing to ") + topic).c_str());
       subscribe_ok &= mqtt_client.subscribe(topic.c_str());
 
