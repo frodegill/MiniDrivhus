@@ -355,7 +355,7 @@ void loop()
         should_read_temp_sensor = false;
         tempsensor_value[CURRENT] = temp_and_humidity.temperature;
         humiditysensor_value[CURRENT] = temp_and_humidity.humidity;
-        //LOG_DEBUG((String("reading temp ")+String((int)tempsensor_value[CURRENT])+String(" and humidity ")+String((int)humiditysensor_value[CURRENT])).c_str());
+        LOG_DEBUG((String("reading temp ")+String((int)tempsensor_value[CURRENT])+String(" and humidity ")+String((int)humiditysensor_value[CURRENT])).c_str());
 
         updateValue(F("temp"), tempsensor_value[CURRENT], tempsensor_value[OLD]);
         updateValue(F("humidity"), humiditysensor_value[CURRENT], humiditysensor_value[OLD]);
@@ -383,15 +383,16 @@ void loop()
 
   if (g_ntp.getLocalTime(local_time)) {
     short current_minute = hour(local_time)*60 + minute(local_time);
-    LOG_INFO(String("Time is " + String((short)current_minute)).c_str());
     short turn_on = 12*60 - g_settings.conf_growlight_minutes_pr_day/2;
     short turn_off = 12*60 + g_settings.conf_growlight_minutes_pr_day/2;
     if (growlight_lit && (current_minute<turn_on || current_minute>=turn_off)) {
       digitalWrite(O_LIGHT_RELAY_ACTIVATE_PIN, LOW);
       growlight_lit = false;
+      LOG_INFO("Shutting off growlight");
     } else if (!growlight_lit && (current_minute>=turn_on && current_minute<turn_off)) {
       digitalWrite(O_LIGHT_RELAY_ACTIVATE_PIN, HIGH);
       growlight_lit = true;
+      LOG_INFO("Turning on growlight");
     }
   } else {
     LOG_INFO("Time is unknown");
