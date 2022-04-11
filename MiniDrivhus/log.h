@@ -1,12 +1,16 @@
 #ifndef _LOG_H_
 #define _LOG_H_
 
+#ifdef TESTING
+# include "testing.h"
+#endif
+
 #define LOG_LEVEL_NONE   (0)
 #define LOG_LEVEL_ERROR  (LOG_LEVEL_NONE+1)
 #define LOG_LEVEL_INFO   (LOG_LEVEL_ERROR+1)
 #define LOG_LEVEL_DEBUG  (LOG_LEVEL_INFO+1)
 
-#define LOG_LEVEL LOG_LEVEL_INFO
+#define LOG_LEVEL LOG_LEVEL_NONE
 
 // ******************************************************
 

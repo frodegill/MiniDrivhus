@@ -26,7 +26,8 @@ Settings::Settings()
   conf_plant_count = MAX_PLANT_COUNT;
   for (byte i=0; i<MAX_PLANT_COUNT; i++)
   {
-    conf_watering_trigger_value[i] = DEFAULT_CONF_WATERING_TRIGGER_VALUE;
+    conf_dry_value[i] = DEFAULT_CONF_DRY_VALUE;
+    conf_wet_value[i] = DEFAULT_CONF_WET_VALUE;
     conf_watering_duration_ms[i] = DEFAULT_CONF_WATERING_DURATION_MS;
     conf_watering_grace_period_sec[i] = DEFAULT_CONF_WATERING_GRACE_PERIOD_SEC;
   }
@@ -88,7 +89,7 @@ void Settings::readPersistentParams()
 
 void Settings::writePersistentString(const char* s, size_t max_length, int& adr)
 {
-  for (unsigned int i=0; i<min(strlen(s), max_length); i++)
+  for (size_t i=0; i<min(strlen(s), max_length); i++)
   {
     EEPROM.write(adr++, s[i]);
   }
@@ -249,6 +250,9 @@ bool Settings::activateWifi()
     delay(500);    
   }
   LOG_INFO("WiFi connected");
+  IPAddress ip = WiFi.localIP();
+  LOG_INFO("IP Address: ");
+  LOG_INFO(ip.toString().c_str());
 
   if (g_mqtt.isRequested())
   {

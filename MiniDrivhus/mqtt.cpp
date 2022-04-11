@@ -38,7 +38,7 @@ void MQTT::callback(char* topic, byte* payload, unsigned int length)
       plantno = plantno*10 + (*key++-'0');
     }
 
-    if (plantno <= MAX_PLANT_COUNT && *key++=='/')
+    if (plantno < MAX_PLANT_COUNT && *key++=='/')
     {
       if (0 == strcmp("water_now", key))
       {
@@ -65,7 +65,7 @@ void MQTT::callback(char* topic, byte* payload, unsigned int length)
     {
       //Turn off watering for all unused plants
       byte i;
-      for (i=g_settings.conf_plant_count; i<MAX_PLANT_COUNT-1; i++)
+      for (i=g_settings.conf_plant_count; i<MAX_PLANT_COUNT; i++)
       {
         digitalWrite(O_PLANT_WATERING_PINS[i], LOW);
       }
@@ -80,12 +80,17 @@ void MQTT::callback(char* topic, byte* payload, unsigned int length)
       plantno = plantno*10 + (*key++-'0');
     }
 
-    if (plantno <= MAX_PLANT_COUNT && *key++=='/')
+    if (plantno<MAX_PLANT_COUNT && *key++=='/')
     {
-      if (0 == strcmp("watering_trigger_value", key))
+      if (0 == strcmp("dry_value", key))
       {
-        g_settings.conf_watering_trigger_value[plantno] = max(0.0, min(100.0, atof(value.c_str())));
-        LOG_INFO((String("mqttCallback plant=")+String((int)plantno)+String(" conf_watering_trigger_value=")+String(g_settings.conf_watering_trigger_value[plantno], 4)).c_str());
+        g_settings.conf_dry_value[plantno] = max(0.0, min(100.0, atof(value.c_str())));
+        LOG_INFO((String("mqttCallback plant=")+String((int)plantno)+String(" conf_dry_value=")+String(g_settings.conf_dry_value[plantno], 4)).c_str());
+      }
+      else if (0 == strcmp("wet_value", key))
+      {
+        g_settings.conf_wet_value[plantno] = max(0.0, min(100.0, atof(value.c_str())));
+        LOG_INFO((String("mqttCallback plant=")+String((int)plantno)+String(" conf_wet_value=")+String(g_settings.conf_wet_value[plantno], 4)).c_str());
       }
       else if (0 == strcmp("watering_duration_ms", key))
       {
@@ -167,7 +172,11 @@ bool MQTT::connectMQTT()
         plant += String(i);
         plant += F("/");
         
-        topic = String(g_settings.mqtt_sensorid_param)+config+plant+F("watering_trigger_value");
+        topic = String(g_settings.mqtt_sensorid_param)+config+plant+F("dry_value");
+        LOG_INFO((String("Subscribing to ") + topic).c_str());
+        subscribe_ok &= mqtt_client.subscribe(topic.c_str());
+
+        topic = String(g_settings.mqtt_sensorid_param)+config+plant+F("wet_value");
         LOG_INFO((String("Subscribing to ") + topic).c_str());
         subscribe_ok &= mqtt_client.subscribe(topic.c_str());
 
@@ -192,6 +201,9 @@ bool MQTT::connectMQTT()
     else
     {
       LOG_INFO("MQTT waiting for reconnect");
+      LOG_DEBUG(g_settings.mqtt_sensorid_param);
+      LOG_DEBUG(g_settings.mqtt_username_param);
+      LOG_DEBUG(g_settings.mqtt_password_param);
       // Wait 3 seconds before retrying
       delay(3000);
     }

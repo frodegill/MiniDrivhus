@@ -1,8 +1,11 @@
 #ifndef _GLOBAL_H_
 #define _GLOBAL_H_
 
-#include <pins_arduino.h>
-
+#ifdef TESTING
+# include "testing.h"
+#else
+# include <pins_arduino.h>
+#endif
 
 static constexpr uint8_t I_SETUP_MODE_PIN             = D2; // pull to Ground to enable setup mode
 static constexpr uint8_t I_TEMPHUMIDSENSOR_PIN        = D3;

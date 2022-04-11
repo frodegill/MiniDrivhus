@@ -1,9 +1,10 @@
 #include "ntp.h"
 
-#include <TimeLib.h>
-#include <Timezone.h>
-#include <WiFiUdp.h>
-
+#ifndef TESTING
+# include <TimeLib.h>
+# include <Timezone.h>
+# include <WiFiUdp.h>
+#endif
 
 static const char ntpServerName[] = "0.no.pool.ntp.org";
 static const uint8_t NTP_PORT = 123;

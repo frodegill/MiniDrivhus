@@ -5,10 +5,13 @@
 #include "ntp.h"
 #include "settings.h"
 
-#include <DHTesp.h>           // Library: DHT_sensor_library_for_ESPx
-#include <Ticker.h>
-#include <TimeLib.h>
-
+#ifdef TESTING
+# include "testing.h"
+#else
+# include <DHTesp.h>           // Library: DHT_sensor_library_for_ESPx
+# include <Ticker.h>
+# include <TimeLib.h>
+#endif
 
 /* PCB v4 for WeMos D1 R1
 
@@ -22,7 +25,8 @@
  minidrivhus/<sensorid>/config/sec_between_reading
  minidrivhus/<sensorid>/config/growlight_minutes_pr_day                   [0 . 1440]
  minidrivhus/<sensorid>/config/plant_count                                [1 - 3]
- minidrivhus/<sensorid>/config/plant[0..(n-1)]/watering_trigger_value     [0.0 - 100.0]
+ minidrivhus/<sensorid>/config/plant[0..(n-1)]/dry_value                  [wet - 100.0]
+ minidrivhus/<sensorid>/config/plant[0..(n-1)]/wet_value                  [0.0 - dry]
  minidrivhus/<sensorid>/config/plant[0..(n-1)]/watering_duration_ms
  minidrivhus/<sensorid>/config/plant[0..(n-1)]/watering_grace_period_sec
  minidrivhus/<sensorid>/debug
@@ -80,6 +84,7 @@ volatile float plant_sensor_value[2][MAX_PLANT_COUNT];
 volatile uint16_t plant_watering_count[2][MAX_PLANT_COUNT];
 volatile unsigned long previous_plant_watering_time[MAX_PLANT_COUNT];
 volatile bool plant_water_requested[MAX_PLANT_COUNT];
+volatile bool plant_in_watering_cycle[MAX_PLANT_COUNT];
 volatile float lightsensor_value[2];
 float tempsensor_value[2];
 float humiditysensor_value[2];
@@ -146,9 +151,19 @@ void onTick()
     case ACTIVATE_PLANT_WATERING_3:
       {
         byte plant = whichOf(state, ACTIVATE_PLANT_WATERING_1, ACTIVATE_PLANT_WATERING_2, ACTIVATE_PLANT_WATERING_3);
-        LOG_DEBUG((String("onTick - activate watering: ")+String((int)plant)+String(" ")+String(plant_sensor_value[CURRENT][plant], 4)+String(", ")+String(g_settings.conf_watering_trigger_value[plant], 4) + String(plant_water_requested[plant] ? " requested" : " not requested")).c_str());
-        if (plant_water_requested[plant] ||
-            (plant_sensor_value[CURRENT][plant] >= g_settings.conf_watering_trigger_value[plant]))
+
+        if (plant_in_watering_cycle[plant] && plant_sensor_value[CURRENT][plant]<=g_settings.conf_wet_value[plant])
+        {
+          plant_in_watering_cycle[plant] = false;
+          LOG_DEBUG((String("onTick - plant")+String((int)plant)+String(" entering watering cycle: ")+String(plant_sensor_value[CURRENT][plant], 4)+String(", ")+String(g_settings.conf_wet_value[plant], 4) +String("-") + String(g_settings.conf_dry_value[plant], 4)).c_str());
+        }
+        else if (!plant_in_watering_cycle[plant] && plant_sensor_value[CURRENT][plant]>=g_settings.conf_dry_value[plant])
+        {
+          plant_in_watering_cycle[plant] = true;
+          LOG_DEBUG((String("onTick - plant")+String((int)plant)+String(" exiting watering cycle: ")+String(plant_sensor_value[CURRENT][plant], 4)+String(", ")+String(g_settings.conf_wet_value[plant], 4) +String("-") + String(g_settings.conf_dry_value[plant], 4)).c_str());
+        }
+        
+        if (plant_water_requested[plant] || plant_in_watering_cycle[plant])
         {
           unsigned long current_sec = millis()/1000;
           if (current_sec < previous_plant_watering_time[plant]) //Wrapped. Happens every ~50 days
@@ -158,7 +173,7 @@ void onTick()
           
           if (plant_water_requested[plant] || (previous_plant_watering_time[plant]+g_settings.conf_watering_grace_period_sec[plant] < current_sec))
           {
-            LOG_DEBUG((String("onTick - activate watering ")+String((int)plant)).c_str());
+            LOG_DEBUG((String("onTick - activate watering ")+String((int)plant) + ": " + String(plant_sensor_value[CURRENT][plant], 4)).c_str());
             digitalWrite(O_PLANT_WATERING_PINS[plant], HIGH);
             plant_watering_count[CURRENT][plant]++;
             previous_plant_watering_time[plant] = current_sec;
@@ -168,14 +183,12 @@ void onTick()
           }
           else
           {
-            LOG_DEBUG((String("onTick - skipping activate watering ")+String((int)plant)+String(" (in ")+String((unsigned long)(current_sec-previous_plant_watering_time[plant]))+String(" of ")+String((int)g_settings.conf_watering_grace_period_sec[plant])+String(" sec grace period")).c_str());
             ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
             state = ((plant+1)<g_settings.conf_plant_count) ? nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR) : ACTIVATE_LIGHTSENSOR;
           }
         }
         else
         {
-          LOG_DEBUG((String("onTick - activate watering ")+String((int)plant)+String(" ignored, ")+String(plant_sensor_value[CURRENT][plant], 4)+String(" < ")+String(g_settings.conf_watering_trigger_value[plant], 4)).c_str());
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
           state = ((plant+1)<g_settings.conf_plant_count) ? nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR) : ACTIVATE_LIGHTSENSOR;
         }
@@ -190,8 +203,10 @@ void onTick()
         byte plant = whichOf(state, DEACTIVATE_PLANT_WATERING_1, DEACTIVATE_PLANT_WATERING_2, DEACTIVATE_PLANT_WATERING_3);
         LOG_DEBUG((String("onTick - deactivate watering ")+String((int)plant)).c_str());
         digitalWrite(O_PLANT_WATERING_PINS[plant], LOW);
+        LOG_DEBUG((String("onTick - watering deactivated ")+String((int)plant)).c_str());
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
         state = ((plant+1)<g_settings.conf_plant_count) ? nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR) : ACTIVATE_LIGHTSENSOR;
+        LOG_DEBUG((String("onTick - deactivate watering, next state: ")+String((int)state)).c_str());
         break;
       }
 
@@ -310,6 +325,7 @@ void setup()
       plant_watering_count[CURRENT][i] = plant_watering_count[OLD][i] = 0;
       previous_plant_watering_time[i] = 0;
       plant_water_requested[i] = false;
+      plant_in_watering_cycle[i] = false;
     }
     lightsensor_value[CURRENT] = lightsensor_value[OLD] = 0.0f;
     tempsensor_value[CURRENT] = tempsensor_value[OLD] = 0.0f;
@@ -355,7 +371,6 @@ void loop()
         should_read_temp_sensor = false;
         tempsensor_value[CURRENT] = temp_and_humidity.temperature;
         humiditysensor_value[CURRENT] = temp_and_humidity.humidity;
-        LOG_DEBUG((String("reading temp ")+String((int)tempsensor_value[CURRENT])+String(" and humidity ")+String((int)humiditysensor_value[CURRENT])).c_str());
 
         updateValue(F("temp"), tempsensor_value[CURRENT], tempsensor_value[OLD]);
         updateValue(F("humidity"), humiditysensor_value[CURRENT], humiditysensor_value[OLD]);
@@ -367,34 +382,34 @@ void loop()
 
       updateValue(F("light"), lightsensor_value[CURRENT], lightsensor_value[OLD]);
     }
-  }
-
-  byte plant;
-  for (plant=0; plant<g_settings.conf_plant_count; plant++)
-  {
-    String plant_path = F("plant");
-    plant_path += String(plant);
-
-    updateValue(plant_path+F("/moisture"), plant_sensor_value[CURRENT][plant], plant_sensor_value[OLD][plant]);
-
-    updateValue(plant_path+F("/watering_count"), plant_watering_count[CURRENT][plant], plant_watering_count[OLD][plant]);
-    plant_watering_count[CURRENT][plant] = plant_watering_count[OLD][plant] = 0;
-  }
-
-  if (g_ntp.getLocalTime(local_time)) {
-    short current_minute = hour(local_time)*60 + minute(local_time);
-    short turn_on = 12*60 - g_settings.conf_growlight_minutes_pr_day/2;
-    short turn_off = 12*60 + g_settings.conf_growlight_minutes_pr_day/2;
-    if (growlight_lit && (current_minute<turn_on || current_minute>=turn_off)) {
-      digitalWrite(O_LIGHT_RELAY_ACTIVATE_PIN, LOW);
-      growlight_lit = false;
-      LOG_INFO("Shutting off growlight");
-    } else if (!growlight_lit && (current_minute>=turn_on && current_minute<turn_off)) {
-      digitalWrite(O_LIGHT_RELAY_ACTIVATE_PIN, HIGH);
-      growlight_lit = true;
-      LOG_INFO("Turning on growlight");
+  
+    byte plant;
+    for (plant=0; plant<g_settings.conf_plant_count; plant++)
+    {
+      String plant_path = F("plant");
+      plant_path += String(plant);
+  
+      updateValue(plant_path+F("/moisture"), plant_sensor_value[CURRENT][plant], plant_sensor_value[OLD][plant]);
+  
+      updateValue(plant_path+F("/watering_count"), plant_watering_count[CURRENT][plant], plant_watering_count[OLD][plant]);
+      plant_watering_count[CURRENT][plant] = plant_watering_count[OLD][plant] = 0;
     }
-  } else {
-    LOG_INFO("Time is unknown");
+
+    if (g_ntp.getLocalTime(local_time)) {
+      short current_minute = hour(local_time)*60 + minute(local_time);
+      short turn_on = 12*60 - g_settings.conf_growlight_minutes_pr_day/2;
+      short turn_off = 12*60 + g_settings.conf_growlight_minutes_pr_day/2;
+      if (growlight_lit && (current_minute<turn_on || current_minute>=turn_off)) {
+        digitalWrite(O_LIGHT_RELAY_ACTIVATE_PIN, LOW);
+        growlight_lit = false;
+        LOG_INFO("Shutting off growlight");
+      } else if (!growlight_lit && (current_minute>=turn_on && current_minute<turn_off)) {
+        digitalWrite(O_LIGHT_RELAY_ACTIVATE_PIN, HIGH);
+        growlight_lit = true;
+        LOG_INFO("Turning on growlight");
+      }
+    } else {
+      LOG_INFO("Time is unknown");
+    }
   }
 }

@@ -2,7 +2,9 @@
 
 #if (LOG_LEVEL>LOG_LEVEL_NONE)
 
-#include <HardwareSerial.h>
+#ifndef TESTING
+# include <HardwareSerial.h>
+#endif
 
 #include "global.h"
 #include "mqtt.h"

@@ -1,9 +1,12 @@
 #ifndef _MQTT_H_
 #define _MQTT_H_
 
-#include <ESP8266WiFi.h>
-#include <PubSubClient.h>
-
+#ifdef TESTING
+# include "testing.h"
+#else
+# include <ESP8266WiFi.h>
+# include <PubSubClient.h>
+#endif
 
 void globalMQTTCallback(char* topic, byte* payload, unsigned int length);
 

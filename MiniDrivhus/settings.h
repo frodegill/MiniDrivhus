@@ -1,9 +1,13 @@
 #ifndef _SETTINGS_H_
 #define _SETTINGS_H_
 
-#include <DNSServer.h>
-#include <EEPROM.h>
-#include <ESP8266WebServer.h>
+#ifdef TESTING
+# include "testing.h"
+#else
+# include <DNSServer.h>
+# include <EEPROM.h>
+# include <ESP8266WebServer.h>
+#endif
 
 #include "global.h"
 
@@ -28,7 +32,8 @@ public:
   static constexpr uint16_t MQTT_DEFAULT_PORT = 1883;
 
   static constexpr unsigned int DEFAULT_CONF_SEC_BETWEEN_READING       = 5; //secoonds min. time between sensor activation
-  static constexpr uint16_t DEFAULT_CONF_WATERING_TRIGGER_VALUE        = 80.0f; //[0.0 - 100.0]
+  static constexpr uint16_t DEFAULT_CONF_DRY_VALUE                     = 54.0f; //[wet - 100.0]
+  static constexpr uint16_t DEFAULT_CONF_WET_VALUE                     = 46.0f; //[0.0 - dry]
   static constexpr unsigned int DEFAULT_CONF_WATERING_DURATION_MS      = 3*1000; //ms to keep watering
   static constexpr unsigned int DEFAULT_CONF_WATERING_GRACE_PERIOD_SEC = 20*60; //sec min. time between watering
   static constexpr unsigned int DEFAULT_CONF_GROWLIGHT_MINUTES_PR_DAY  = 16*60; //minutes with growlight lit pr day
@@ -48,7 +53,7 @@ public:
   void activateSetupAP();
   bool activateWifi();
   void processNetwork(bool setup_mode);
-  
+
 public:
   std::shared_ptr<ESP8266WebServer> server;
 
@@ -68,7 +73,8 @@ public:
   unsigned int conf_sec_between_reading;
   short conf_growlight_minutes_pr_day;
   byte conf_plant_count;
-  float conf_watering_trigger_value[MAX_PLANT_COUNT];
+  float conf_dry_value[MAX_PLANT_COUNT];
+  float conf_wet_value[MAX_PLANT_COUNT];
   unsigned int conf_watering_duration_ms[MAX_PLANT_COUNT];
   unsigned int conf_watering_grace_period_sec[MAX_PLANT_COUNT];
 };

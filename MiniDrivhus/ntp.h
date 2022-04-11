@@ -1,8 +1,11 @@
 #ifndef _NTP_H_
 #define _NTP_H_
 
-#include "Arduino.h"
-
+#ifdef TESTING
+# include "testing.h"
+#else
+# include "Arduino.h"
+#endif
 
 void sendNTPpacket(const char* address);
 time_t getNtpUtcTime();
