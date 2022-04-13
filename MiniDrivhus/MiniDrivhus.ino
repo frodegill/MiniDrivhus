@@ -24,6 +24,8 @@
  minidrivhus/<sensorid>/plant[0..(n-1)]/water_now
  minidrivhus/<sensorid>/config/sec_between_reading
  minidrivhus/<sensorid>/config/growlight_minutes_pr_day                   [0 . 1440]
+ minidrivhus/<sensorid>/config/fan_activate_temp                          [0.0 - 100.0]
+ minidrivhus/<sensorid>/config/fan_activate_humid                         [0.0 - 100.0]
  minidrivhus/<sensorid>/config/plant_count                                [1 - 3]
  minidrivhus/<sensorid>/config/plant[0..(n-1)]/dry_value                  [wet - 100.0]
  minidrivhus/<sensorid>/config/plant[0..(n-1)]/wet_value                  [0.0 - dry]
@@ -374,6 +376,8 @@ void loop()
 
         updateValue(F("temp"), tempsensor_value[CURRENT], tempsensor_value[OLD]);
         updateValue(F("humidity"), humiditysensor_value[CURRENT], humiditysensor_value[OLD]);
+
+        digitalWrite(O_FAN_RELAY_ACTIVATE_PIN, (tempsensor_value[CURRENT]>=g_settings.conf_fan_activate_temp_value || humiditysensor_value[CURRENT]>=g_settings.conf_fan_activate_humid_value) ? HIGH : LOW);
       }
       else
       {

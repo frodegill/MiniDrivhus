@@ -31,13 +31,15 @@ public:
 
   static constexpr uint16_t MQTT_DEFAULT_PORT = 1883;
 
-  static constexpr unsigned int DEFAULT_CONF_SEC_BETWEEN_READING       = 5; //secoonds min. time between sensor activation
-  static constexpr uint16_t DEFAULT_CONF_DRY_VALUE                     = 54.0f; //[wet - 100.0]
-  static constexpr uint16_t DEFAULT_CONF_WET_VALUE                     = 46.0f; //[0.0 - dry]
+  static constexpr unsigned int DEFAULT_CONF_SEC_BETWEEN_READING       = 5;      //secoonds min. time between sensor activation
+  static constexpr float        DEFAULT_CONF_DRY_VALUE                 = 54.0f;  //[wet - 100.0]
+  static constexpr float        DEFAULT_CONF_WET_VALUE                 = 46.0f;  //[0.0 - dry]
+  static constexpr float        DEFAULT_CONF_FAN_ACTIVATE_TEMP_VALUE   = 40.0f;  //[0.0 - 100.0]
+  static constexpr float        DEFAULT_CONF_FAN_ACTIVATE_HUMID_VALUE  = 98.0f;  //[0.0 - 100.0]
   static constexpr unsigned int DEFAULT_CONF_WATERING_DURATION_MS      = 3*1000; //ms to keep watering
-  static constexpr unsigned int DEFAULT_CONF_WATERING_GRACE_PERIOD_SEC = 20*60; //sec min. time between watering
-  static constexpr unsigned int DEFAULT_CONF_GROWLIGHT_MINUTES_PR_DAY  = 16*60; //minutes with growlight lit pr day
-  static constexpr const char* DEFAULT_SENSORID = "/MiniDrivhus/Sensor1/";
+  static constexpr unsigned int DEFAULT_CONF_WATERING_GRACE_PERIOD_SEC = 20*60;  //sec min. time between watering
+  static constexpr unsigned int DEFAULT_CONF_GROWLIGHT_MINUTES_PR_DAY  = 16*60;  //minutes with growlight lit pr day
+  static constexpr const char*  DEFAULT_SENSORID = "/MiniDrivhus/Sensor1/";
 
 public:
   Settings();
@@ -75,6 +77,8 @@ public:
   byte conf_plant_count;
   float conf_dry_value[MAX_PLANT_COUNT];
   float conf_wet_value[MAX_PLANT_COUNT];
+  float conf_fan_activate_temp_value;
+  float conf_fan_activate_humid_value;
   unsigned int conf_watering_duration_ms[MAX_PLANT_COUNT];
   unsigned int conf_watering_grace_period_sec[MAX_PLANT_COUNT];
 };

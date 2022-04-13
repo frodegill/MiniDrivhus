@@ -9,6 +9,7 @@
 
 static constexpr uint8_t I_SETUP_MODE_PIN             = D2; // pull to Ground to enable setup mode
 static constexpr uint8_t I_TEMPHUMIDSENSOR_PIN        = D3;
+static constexpr uint8_t O_FAN_RELAY_ACTIVATE_PIN     = D9;
 static constexpr uint8_t O_LIGHT_RELAY_ACTIVATE_PIN   = D10;
 static constexpr uint8_t O_PLANT_WATERING_PINS[]      = {D6, D7, D8};
 static constexpr uint8_t O_ANALOG_ADDR_S0             = D4;

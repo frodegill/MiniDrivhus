@@ -71,6 +71,18 @@ void MQTT::callback(char* topic, byte* payload, unsigned int length)
       }
     }
   }
+  else if (0 == strcmp("config/fan_activate_temp", key))
+  {
+    g_settings.conf_fan_activate_temp_value = max(0.0, min(100.0, atof(value.c_str())));
+    LOG_INFO((String("mqttCallback conf_fan_activate_temp_value=")+String((int)g_settings.conf_fan_activate_temp_value)).c_str());
+    digitalWrite(O_FAN_RELAY_ACTIVATE_PIN, LOW);
+  }
+  else if (0 == strcmp("config/fan_activate_humid", key))
+  {
+    g_settings.conf_fan_activate_humid_value = max(0.0, min(100.0, atof(value.c_str())));
+    LOG_INFO((String("mqttCallback conf_fan_activate_humid_value=")+String((int)g_settings.conf_fan_activate_humid_value)).c_str());
+    digitalWrite(O_FAN_RELAY_ACTIVATE_PIN, LOW);
+  }
   else if (0 == strncmp("config/plant", key, 12))
   {
     key += 12;
@@ -163,6 +175,14 @@ bool MQTT::connectMQTT()
       LOG_INFO((String("Subscribing to ") + topic).c_str());
       subscribe_ok &= mqtt_client.subscribe(topic.c_str());
 
+      topic = String(g_settings.mqtt_sensorid_param)+F("config/fan_activate_temp");
+      LOG_INFO((String("Subscribing to ") + topic).c_str());
+      subscribe_ok &= mqtt_client.subscribe(topic.c_str());
+
+      topic = String(g_settings.mqtt_sensorid_param)+F("config/fan_activate_humid");
+      LOG_INFO((String("Subscribing to ") + topic).c_str());
+      subscribe_ok &= mqtt_client.subscribe(topic.c_str());
+ 
       byte i;
       for (i=0; i<MAX_PLANT_COUNT; i++)
       {

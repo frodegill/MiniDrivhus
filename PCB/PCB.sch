@@ -1,5 +1,4 @@
 EESchema Schematic File Version 4
-LIBS:PCB-cache
 EELAYER 30 0
 EELAYER END
 $Descr A4 11693 8268
@@ -490,10 +489,6 @@ F 3 "~" H 6550 4150 50  0001 C CNN
 	0    -1   -1   0   
 $EndComp
 Wire Wire Line
-	6550 4350 6550 5800
-Wire Wire Line
-	6450 5800 6700 5150
-Wire Wire Line
 	6800 4550 6650 4350
 Wire Wire Line
 	4650 3500 4900 3750
@@ -778,7 +773,100 @@ F 3 "~" H 2400 4100 50  0001 C CNN
 $EndComp
 Wire Wire Line
 	8950 3850 8250 2800
-NoConn ~ 8950 3750
 Wire Wire Line
 	8950 3650 5400 5600
+$Comp
+L Relay:SANYOU_SRD_Form_C K5
+U 1 1 61585E13
+P 9950 4650
+F 0 "K5" H 10380 4696 50  0000 L CNN
+F 1 "RelayFan" H 10380 4605 50  0000 L CNN
+F 2 "Relay_THT:Relay_SPDT_SANYOU_SRD_Series_Form_C" H 10400 4600 50  0001 L CNN
+F 3 "http://www.sanyourelay.ca/public/products/pdf/SRD.pdf" H 9950 4650 50  0001 C CNN
+	1    9950 4650
+	1    0    0    -1  
+$EndComp
+$Comp
+L power:+5V #PWR0106
+U 1 1 61585E19
+P 9750 4350
+F 0 "#PWR0106" H 9750 4200 50  0001 C CNN
+F 1 "+5V" H 9765 4523 50  0000 C CNN
+F 2 "" H 9750 4350 50  0001 C CNN
+F 3 "" H 9750 4350 50  0001 C CNN
+	1    9750 4350
+	1    0    0    -1  
+$EndComp
+NoConn ~ 10050 4350
+$Comp
+L Connector:Screw_Terminal_01x02 J15
+U 1 1 61585E20
+P 10000 3950
+F 0 "J15" V 9966 3762 50  0000 R CNN
+F 1 "Fan In" V 9875 3762 50  0000 R CNN
+F 2 "TerminalBlock:TerminalBlock_bornier-2_P5.08mm" H 10000 3950 50  0001 C CNN
+F 3 "~" H 10000 3950 50  0001 C CNN
+	1    10000 3950
+	0    -1   -1   0   
+$EndComp
+Wire Wire Line
+	10000 4150 10000 5600
+Wire Wire Line
+	10250 4350 10100 4150
+$Comp
+L Connector:Screw_Terminal_01x02 J16
+U 1 1 6158A8FC
+P 10000 5800
+F 0 "J16" V 9966 5612 50  0000 R CNN
+F 1 "Fan Out" V 9875 5612 50  0000 R CNN
+F 2 "TerminalBlock:TerminalBlock_bornier-2_P5.08mm" H 10000 5800 50  0001 C CNN
+F 3 "~" H 10000 5800 50  0001 C CNN
+	1    10000 5800
+	0    1    1    0   
+$EndComp
+Wire Wire Line
+	6450 5800 6700 5150
+Wire Wire Line
+	6550 4350 6550 5800
+Wire Wire Line
+	9900 5600 10150 4950
+$Comp
+L Transistor_BJT:BC337 Q5
+U 1 1 6159554C
+P 9500 5250
+F 0 "Q5" H 9691 5296 50  0000 L CNN
+F 1 "BC337" H 9691 5205 50  0000 L CNN
+F 2 "Package_TO_SOT_THT:TO-92_HandSolder" H 9700 5175 50  0001 L CIN
+F 3 "https://diotec.com/tl_files/diotec/files/pdf/datasheets/bc337.pdf" H 9500 5250 50  0001 L CNN
+	1    9500 5250
+	1    0    0    -1  
+$EndComp
+$Comp
+L Device:R R6
+U 1 1 61595552
+P 9100 5400
+F 0 "R6" H 9170 5446 50  0000 L CNN
+F 1 "1K" H 9170 5355 50  0000 L CNN
+F 2 "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal" V 9030 5400 50  0001 C CNN
+F 3 "~" H 9100 5400 50  0001 C CNN
+	1    9100 5400
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	9100 5250 9300 5250
+$Comp
+L power:GND #PWR0107
+U 1 1 615979FD
+P 9600 5450
+F 0 "#PWR0107" H 9600 5200 50  0001 C CNN
+F 1 "GND" H 9605 5277 50  0000 C CNN
+F 2 "" H 9600 5450 50  0001 C CNN
+F 3 "" H 9600 5450 50  0001 C CNN
+	1    9600 5450
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	9100 5550 8950 3750
+Wire Wire Line
+	9600 5050 9750 4950
 $EndSCHEMATC

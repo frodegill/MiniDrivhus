@@ -31,6 +31,8 @@ Settings::Settings()
     conf_watering_duration_ms[i] = DEFAULT_CONF_WATERING_DURATION_MS;
     conf_watering_grace_period_sec[i] = DEFAULT_CONF_WATERING_GRACE_PERIOD_SEC;
   }
+  conf_fan_activate_temp_value = DEFAULT_CONF_FAN_ACTIVATE_TEMP_VALUE;
+  conf_fan_activate_humid_value = DEFAULT_CONF_FAN_ACTIVATE_HUMID_VALUE;
 }
 
 void Settings::enable()
