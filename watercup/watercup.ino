@@ -1,65 +1,118 @@
-static const byte triggerPin = D5;
-static const byte lowSensorPin = D6;
-static const byte highSensorPin = D7;
+#include "global.h"
 
-static const unsigned long LONG_DELAY = 15*60*1000L;
-static const unsigned long SHORT_DELAY = 1000L;
+# include <TimeLib.h>
+
+#include "mqtt.h"
+#include "ntp.h"
+#include "settings.h"
+
+/*
+ MQTT paths:
+ watercup/<sensorid>/valve_open
+ */
+
+
+enum State {
+  SETUP_MODE,
+  NORMAL
+};
+volatile State state;
+
+MQTT g_mqtt;
+NTP g_ntp;
+time_t local_time;
+Settings g_settings;
 
 volatile unsigned long failsafeDelay;
 
-#undef ENABLE_LOGGING
+volatile bool valve_open;
+volatile bool valve_changed_state;
 
 
 void setup() {
-#ifdef ENABLE_LOGGING
   Serial.begin(9600);
-#endif
 
-  pinMode(triggerPin, OUTPUT);
-  digitalWrite(triggerPin, LOW);
-  failsafeDelay = LONG_DELAY;
+  g_settings.enable();
   
-  pinMode(lowSensorPin, INPUT);
-  pinMode(highSensorPin, INPUT);
-  
-  attachInterrupt(digitalPinToInterrupt(lowSensorPin), updateFlowStatus, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(highSensorPin), updateFlowStatus, CHANGE);
+  pinMode(I_SETUP_MODE_PIN, INPUT);
+  delay(100);
 
-#ifdef ENABLE_LOGGING
-  Serial.println("Ready.");
-#endif
+  if (false && (LOW == digitalRead(I_SETUP_MODE_PIN)))
+  {
+    Serial.println("Setup");
+    state = SETUP_MODE;
+    g_settings.activateSetupAP();
+  }
+  else
+  {
+    Serial.println("Normal");
+    state = NORMAL;
 
-  updateFlowStatus();
+    pinMode(O_TRIGGER_PIN, OUTPUT);
+    digitalWrite(O_TRIGGER_PIN, LOW);
+    failsafeDelay = LONG_DELAY;
+    
+    pinMode(I_LOW_SENSOR_PIN, INPUT);
+    pinMode(I_HIGH_SENSOR_PIN, INPUT);
+
+    attachInterrupt(digitalPinToInterrupt(I_LOW_SENSOR_PIN), updateFlowStatus, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(I_HIGH_SENSOR_PIN), updateFlowStatus, CHANGE);
+
+    if (!g_settings.activateWifi())
+    {
+      // reset?
+    }
+
+    valve_open = false;
+    valve_changed_state = true;
+    
+    updateFlowStatus();
+  }
 }
 
 void loop() {
-  delay(failsafeDelay);
-  updateFlowStatus();
+  g_settings.processNetwork(state == SETUP_MODE);
+
+  if (state == SETUP_MODE) {
+    delay(100);
+  }
+  else
+  {
+    delay(failsafeDelay);
+    updateFlowStatus();
+
+    if (valve_changed_state) // Publishing to MQTT cannot be done in interrupt
+    {
+      g_mqtt.publishMQTTValue(F("valve_open"), String(valve_open ? "1" : "0"));
+      valve_changed_state = false;
+    }
+
+    if (g_ntp.getLocalTime(local_time)) {
+      short current_minute = hour(local_time)*60 + minute(local_time); // 0 - 1440
+    } else {
+      // Time is unknown
+    }
+  }
 }
 
 ICACHE_RAM_ATTR void updateFlowStatus()
 {
-  int low_status = digitalRead(lowSensorPin);
-  int high_status = digitalRead(highSensorPin);
-  int trigger_status = digitalRead(triggerPin);
-#ifdef ENABLE_LOGGING
-  Serial.println("Update. low="+String(low_status==LOW?"LOW ":"HIGH")+", high="+String(high_status==LOW?"LOW ":"HIGH")+ ", trigger="+String(trigger_status==LOW?"LOW ":"HIGH"));
-#endif
+  int low_status = digitalRead(I_LOW_SENSOR_PIN);
+  int high_status = digitalRead(I_HIGH_SENSOR_PIN);
+  int trigger_status = digitalRead(O_TRIGGER_PIN);
   if (trigger_status==LOW && low_status==LOW && high_status!=HIGH /*fail safe*/)
   {
-#ifdef ENABLE_LOGGING
-    Serial.println("Starting flow");
-#endif
-    digitalWrite(triggerPin, HIGH);
+    digitalWrite(O_TRIGGER_PIN, HIGH);
     failsafeDelay = SHORT_DELAY;
+    valve_open = true;
+    valve_changed_state = true;
   }
   
   if (trigger_status==HIGH && high_status==HIGH)
   {
-#ifdef ENABLE_LOGGING
-    Serial.println("Stopping flow");
-#endif
-    digitalWrite(triggerPin, LOW);
+    digitalWrite(O_TRIGGER_PIN, LOW);
     failsafeDelay = LONG_DELAY;
+    valve_open = false;
+    valve_changed_state = true;
   }
 }
