@@ -19,6 +19,7 @@
  minidrivhus/<sensorid>/light
  minidrivhus/<sensorid>/temp
  minidrivhus/<sensorid>/humidity
+ minidrivhus/<sensorid>/fan_on
  minidrivhus/<sensorid>/plant[0..(n-1)]/moisture
  minidrivhus/<sensorid>/plant[0..(n-1)]/watering_count
  minidrivhus/<sensorid>/plant[0..(n-1)]/water_now
@@ -87,6 +88,7 @@ volatile uint16_t plant_watering_count[2][MAX_PLANT_COUNT];
 volatile unsigned long previous_plant_watering_time[MAX_PLANT_COUNT];
 volatile bool plant_water_requested[MAX_PLANT_COUNT];
 volatile bool plant_in_watering_cycle[MAX_PLANT_COUNT];
+volatile uint16_t fan_value[2];
 volatile float lightsensor_value[2];
 float tempsensor_value[2];
 float humiditysensor_value[2];
@@ -308,6 +310,7 @@ void setup()
     {
       pinMode(O_PLANT_WATERING_PINS[i], OUTPUT);
     }
+    pinMode(O_FAN_RELAY_ACTIVATE_PIN, OUTPUT);
     pinMode(O_LIGHT_RELAY_ACTIVATE_PIN, OUTPUT);
     pinMode(O_ANALOG_ADDR_S0, OUTPUT);
     pinMode(O_ANALOG_ADDR_S1, OUTPUT);
@@ -318,6 +321,7 @@ void setup()
     {
       digitalWrite(O_PLANT_WATERING_PINS[i], LOW);
     }
+    digitalWrite(O_FAN_RELAY_ACTIVATE_PIN, LOW);
     digitalWrite(O_LIGHT_RELAY_ACTIVATE_PIN, LOW);
     selectAnalogAddr(0);
 
@@ -329,6 +333,7 @@ void setup()
       plant_water_requested[i] = false;
       plant_in_watering_cycle[i] = false;
     }
+    fan_value[CURRENT] = fan_value[OLD] = 0;
     lightsensor_value[CURRENT] = lightsensor_value[OLD] = 0.0f;
     tempsensor_value[CURRENT] = tempsensor_value[OLD] = 0.0f;
     humiditysensor_value[CURRENT] = humiditysensor_value[OLD] = 0.0f;
@@ -377,7 +382,12 @@ void loop()
         updateValue(F("temp"), tempsensor_value[CURRENT], tempsensor_value[OLD]);
         updateValue(F("humidity"), humiditysensor_value[CURRENT], humiditysensor_value[OLD]);
 
-        digitalWrite(O_FAN_RELAY_ACTIVATE_PIN, (tempsensor_value[CURRENT]>=g_settings.conf_fan_activate_temp_value || humiditysensor_value[CURRENT]>=g_settings.conf_fan_activate_humid_value) ? HIGH : LOW);
+        fan_value[CURRENT] = ((tempsensor_value[CURRENT]>=g_settings.conf_fan_activate_temp_value) || (humiditysensor_value[CURRENT]>=g_settings.conf_fan_activate_humid_value)) ? 1 : 0;
+        if (fan_value[CURRENT] != fan_value[OLD])
+        {
+          digitalWrite(O_FAN_RELAY_ACTIVATE_PIN, fan_value[CURRENT]==0 ? LOW : HIGH);
+          updateValue(F("fan_on"), fan_value[CURRENT], fan_value[OLD]);
+        }
       }
       else
       {
