@@ -2,6 +2,7 @@
 
 # include <TimeLib.h>
 
+#include "steppermotor.h"
 #include "mqtt.h"
 #include "ntp.h"
 #include "settings.h"
@@ -18,6 +19,7 @@ enum State {
 };
 volatile State state;
 
+StepperMotor g_steppermotor;
 MQTT g_mqtt;
 NTP g_ntp;
 time_t local_time;
@@ -32,6 +34,7 @@ volatile bool valve_changed_state;
 void setup() {
   Serial.begin(9600);
 
+  g_steppermotor.initialize();
   g_settings.enable();
   
   pinMode(I_SETUP_MODE_PIN, INPUT);
@@ -92,6 +95,8 @@ void loop() {
     } else {
       // Time is unknown
     }
+
+    g_steppermotor.step();
   }
 }
 
