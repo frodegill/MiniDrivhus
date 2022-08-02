@@ -23,9 +23,9 @@ Settings::Settings()
 
   conf_sec_between_reading = DEFAULT_CONF_SEC_BETWEEN_READING;
   conf_growlight_minutes_pr_day = DEFAULT_CONF_GROWLIGHT_MINUTES_PR_DAY;
-  conf_plant_count = MAX_PLANT_COUNT;
   for (byte i=0; i<MAX_PLANT_COUNT; i++)
   {
+    conf_plant_enabled[i] = DEFAULT_CONF_PLANT_ENABLED;
     conf_dry_value[i] = DEFAULT_CONF_DRY_VALUE;
     conf_wet_value[i] = DEFAULT_CONF_WET_VALUE;
     conf_watering_duration_ms[i] = DEFAULT_CONF_WATERING_DURATION_MS;

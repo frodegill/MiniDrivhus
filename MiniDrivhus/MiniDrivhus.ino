@@ -27,7 +27,7 @@
  minidrivhus/<sensorid>/config/growlight_minutes_pr_day                   [0 . 1440]
  minidrivhus/<sensorid>/config/fan_activate_temp                          [0.0 - 100.0]
  minidrivhus/<sensorid>/config/fan_activate_humid                         [0.0 - 100.0]
- minidrivhus/<sensorid>/config/plant_count                                [1 - 3]
+ minidrivhus/<sensorid>/config/plant[0..(n-1)]/enabled                    [0, 1]
  minidrivhus/<sensorid>/config/plant[0..(n-1)]/dry_value                  [wet - 100.0]
  minidrivhus/<sensorid>/config/plant[0..(n-1)]/wet_value                  [0.0 - dry]
  minidrivhus/<sensorid>/config/plant[0..(n-1)]/watering_duration_ms
@@ -156,18 +156,18 @@ void onTick()
       {
         byte plant = whichOf(state, ACTIVATE_PLANT_WATERING_1, ACTIVATE_PLANT_WATERING_2, ACTIVATE_PLANT_WATERING_3);
 
-        if (plant_in_watering_cycle[plant] && plant_sensor_value[CURRENT][plant]<=g_settings.conf_wet_value[plant])
+        if (g_settings.conf_plant_enabled[plant] && plant_in_watering_cycle[plant] && plant_sensor_value[CURRENT][plant]<=g_settings.conf_wet_value[plant])
         {
           plant_in_watering_cycle[plant] = false;
           LOG_DEBUG((String("onTick - plant")+String((int)plant)+String(" entering watering cycle: ")+String(plant_sensor_value[CURRENT][plant], 4)+String(", ")+String(g_settings.conf_wet_value[plant], 4) +String("-") + String(g_settings.conf_dry_value[plant], 4)).c_str());
         }
-        else if (!plant_in_watering_cycle[plant] && plant_sensor_value[CURRENT][plant]>=g_settings.conf_dry_value[plant])
+        else if (g_settings.conf_plant_enabled[plant] && !plant_in_watering_cycle[plant] && plant_sensor_value[CURRENT][plant]>=g_settings.conf_dry_value[plant])
         {
           plant_in_watering_cycle[plant] = true;
           LOG_DEBUG((String("onTick - plant")+String((int)plant)+String(" exiting watering cycle: ")+String(plant_sensor_value[CURRENT][plant], 4)+String(", ")+String(g_settings.conf_wet_value[plant], 4) +String("-") + String(g_settings.conf_dry_value[plant], 4)).c_str());
         }
         
-        if (plant_water_requested[plant] || plant_in_watering_cycle[plant])
+        if (g_settings.conf_plant_enabled[plant] && (plant_water_requested[plant] || plant_in_watering_cycle[plant]))
         {
           unsigned long current_sec = millis()/1000;
           if (current_sec < previous_plant_watering_time[plant]) //Wrapped. Happens every ~50 days
@@ -188,13 +188,13 @@ void onTick()
           else
           {
             ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-            state = ((plant+1)<g_settings.conf_plant_count) ? nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR) : ACTIVATE_LIGHTSENSOR;
+            state = nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR);
           }
         }
         else
         {
           ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-          state = ((plant+1)<g_settings.conf_plant_count) ? nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR) : ACTIVATE_LIGHTSENSOR;
+          state = nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR);
         }
 
         break;
@@ -205,12 +205,9 @@ void onTick()
     case DEACTIVATE_PLANT_WATERING_3:
       {
         byte plant = whichOf(state, DEACTIVATE_PLANT_WATERING_1, DEACTIVATE_PLANT_WATERING_2, DEACTIVATE_PLANT_WATERING_3);
-        LOG_DEBUG((String("onTick - deactivate watering ")+String((int)plant)).c_str());
         digitalWrite(O_PLANT_WATERING_PINS[plant], LOW);
-        LOG_DEBUG((String("onTick - watering deactivated ")+String((int)plant)).c_str());
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
-        state = ((plant+1)<g_settings.conf_plant_count) ? nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR) : ACTIVATE_LIGHTSENSOR;
-        LOG_DEBUG((String("onTick - deactivate watering, next state: ")+String((int)state)).c_str());
+        state = nextState(plant, ACTIVATE_PLANT_SENSOR_2, ACTIVATE_PLANT_SENSOR_3, ACTIVATE_LIGHTSENSOR);
         break;
       }
 
@@ -355,7 +352,7 @@ void setup()
     growlight_lit = false;
     
     state = START;
-    LOG_DEBUG((String("state=START, plant_count=")+String((int)g_settings.conf_plant_count)).c_str());
+    LOG_DEBUG("state=START");
     onTick();
   }
 }
@@ -398,8 +395,11 @@ void loop()
     }
   
     byte plant;
-    for (plant=0; plant<g_settings.conf_plant_count; plant++)
+    for (plant=0; plant<MAX_PLANT_COUNT; plant++)
     {
+      if (!g_settings.conf_plant_enabled[plant])
+        continue;
+        
       String plant_path = F("plant");
       plant_path += String(plant);
   

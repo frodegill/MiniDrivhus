@@ -57,20 +57,6 @@ void MQTT::callback(char* topic, byte* payload, unsigned int length)
     g_settings.conf_growlight_minutes_pr_day = min(60*24, max(0, atoi(value.c_str())));
     LOG_INFO((String("mqttCallback growlight_minutes_pr_day=")+String((short)g_settings.conf_growlight_minutes_pr_day)).c_str());
   }
-  else if (0 == strcmp("config/plant_count", key))
-  {
-    g_settings.conf_plant_count = max(1, min(static_cast<int>(MAX_PLANT_COUNT), atoi(value.c_str())));
-    LOG_INFO((String("mqttCallback conf_plant_count=")+String((int)g_settings.conf_plant_count)).c_str());
-    if (g_settings.conf_plant_count < MAX_PLANT_COUNT)
-    {
-      //Turn off watering for all unused plants
-      byte i;
-      for (i=g_settings.conf_plant_count; i<MAX_PLANT_COUNT; i++)
-      {
-        digitalWrite(O_PLANT_WATERING_PINS[i], LOW);
-      }
-    }
-  }
   else if (0 == strcmp("config/fan_activate_temp", key))
   {
     g_settings.conf_fan_activate_temp_value = max(0.0, min(100.0, atof(value.c_str())));
@@ -94,7 +80,16 @@ void MQTT::callback(char* topic, byte* payload, unsigned int length)
 
     if (plantno<MAX_PLANT_COUNT && *key++=='/')
     {
-      if (0 == strcmp("dry_value", key))
+      if (0 == strcmp("enabled", key))
+      {
+        g_settings.conf_plant_enabled[plantno] = (atoi(value.c_str())!=0) ? 1 : 0;
+        LOG_INFO((String("mqttCallback plant=")+String((int)plantno)+String(" enabled=")+String((int)g_settings.conf_plant_enabled[plantno])).c_str());
+        if (!g_settings.conf_plant_enabled[plantno])
+        {
+          digitalWrite(O_PLANT_WATERING_PINS[plantno], LOW);
+        }
+      }
+      else if (0 == strcmp("dry_value", key))
       {
         g_settings.conf_dry_value[plantno] = max(0.0, min(100.0, atof(value.c_str())));
         LOG_INFO((String("mqttCallback plant=")+String((int)plantno)+String(" conf_dry_value=")+String(g_settings.conf_dry_value[plantno], 4)).c_str());
@@ -171,10 +166,6 @@ bool MQTT::connectMQTT()
       LOG_INFO((String("Subscribing to ") + topic).c_str());
       subscribe_ok &= mqtt_client.subscribe(topic.c_str());
 
-      topic = String(g_settings.mqtt_sensorid_param)+F("config/plant_count");
-      LOG_INFO((String("Subscribing to ") + topic).c_str());
-      subscribe_ok &= mqtt_client.subscribe(topic.c_str());
-
       topic = String(g_settings.mqtt_sensorid_param)+F("config/fan_activate_temp");
       LOG_INFO((String("Subscribing to ") + topic).c_str());
       subscribe_ok &= mqtt_client.subscribe(topic.c_str());
@@ -192,6 +183,10 @@ bool MQTT::connectMQTT()
         plant += String(i);
         plant += F("/");
         
+        topic = String(g_settings.mqtt_sensorid_param)+config+plant+F("enabled");
+        LOG_INFO((String("Subscribing to ") + topic).c_str());
+        subscribe_ok &= mqtt_client.subscribe(topic.c_str());
+
         topic = String(g_settings.mqtt_sensorid_param)+config+plant+F("dry_value");
         LOG_INFO((String("Subscribing to ") + topic).c_str());
         subscribe_ok &= mqtt_client.subscribe(topic.c_str());
