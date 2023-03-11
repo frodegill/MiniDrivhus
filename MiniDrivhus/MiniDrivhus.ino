@@ -144,7 +144,7 @@ void onTick()
       {
         byte plant = whichOf(state, READ_PLANT_SENSOR_1, READ_PLANT_SENSOR_2, READ_PLANT_SENSOR_3);
         plant_sensor_value[CURRENT][plant] = max(0.0f, min(100.0f, 100.0f*static_cast<float>(analogRead(A0))/static_cast<float>(MAX_ANALOG_VALUE)));
-        //LOG_DEBUG((String("onTick - read sensor ")+String((int)plant)+String(", got ")+String((int)plant_sensor_value[CURRENT][plant])).c_str());
+        LOG_DEBUG((String("onTick - read sensor ")+String((int)plant)+String(", got ")+String((int)plant_sensor_value[CURRENT][plant])).c_str());
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
         state = nextState(plant, ACTIVATE_PLANT_WATERING_1, ACTIVATE_PLANT_WATERING_2, ACTIVATE_PLANT_WATERING_3);
         break;
@@ -156,15 +156,18 @@ void onTick()
       {
         byte plant = whichOf(state, ACTIVATE_PLANT_WATERING_1, ACTIVATE_PLANT_WATERING_2, ACTIVATE_PLANT_WATERING_3);
 
-        if (g_settings.conf_plant_enabled[plant] && plant_in_watering_cycle[plant] && plant_sensor_value[CURRENT][plant]<=g_settings.conf_wet_value[plant])
+        if (g_settings.conf_plant_enabled[plant])
         {
-          plant_in_watering_cycle[plant] = false;
-          LOG_DEBUG((String("onTick - plant")+String((int)plant)+String(" entering watering cycle: ")+String(plant_sensor_value[CURRENT][plant], 4)+String(", ")+String(g_settings.conf_wet_value[plant], 4) +String("-") + String(g_settings.conf_dry_value[plant], 4)).c_str());
-        }
-        else if (g_settings.conf_plant_enabled[plant] && !plant_in_watering_cycle[plant] && plant_sensor_value[CURRENT][plant]>=g_settings.conf_dry_value[plant])
-        {
-          plant_in_watering_cycle[plant] = true;
-          LOG_DEBUG((String("onTick - plant")+String((int)plant)+String(" exiting watering cycle: ")+String(plant_sensor_value[CURRENT][plant], 4)+String(", ")+String(g_settings.conf_wet_value[plant], 4) +String("-") + String(g_settings.conf_dry_value[plant], 4)).c_str());
+          if (plant_in_watering_cycle[plant] && plant_sensor_value[CURRENT][plant]<=g_settings.conf_wet_value[plant])
+          {
+            plant_in_watering_cycle[plant] = false;
+            LOG_INFO((String("onTick - plant")+String((int)plant)+String(" exiting watering cycle: ")+String(plant_sensor_value[CURRENT][plant], 4)+String(", ")+String(g_settings.conf_wet_value[plant], 4) +String("-") + String(g_settings.conf_dry_value[plant], 4)).c_str());
+          }
+          else if (!plant_in_watering_cycle[plant] && plant_sensor_value[CURRENT][plant]>=g_settings.conf_dry_value[plant])
+          {
+            plant_in_watering_cycle[plant] = true;
+            LOG_INFO((String("onTick - plant")+String((int)plant)+String(" entering watering cycle: ")+String(plant_sensor_value[CURRENT][plant], 4)+String(", ")+String(g_settings.conf_wet_value[plant], 4) +String("-") + String(g_settings.conf_dry_value[plant], 4)).c_str());
+          }
         }
         
         if (g_settings.conf_plant_enabled[plant] && (plant_water_requested[plant] || plant_in_watering_cycle[plant]))
@@ -175,7 +178,7 @@ void onTick()
             previous_plant_watering_time[plant] = current_sec;
           }
           
-          if (plant_water_requested[plant] || (previous_plant_watering_time[plant]+g_settings.conf_watering_grace_period_sec[plant] < current_sec))
+          if (plant_water_requested[plant] || (previous_plant_watering_time[plant]==0 || (previous_plant_watering_time[plant]+g_settings.conf_watering_grace_period_sec[plant] < current_sec)))
           {
             LOG_DEBUG((String("onTick - activate watering ")+String((int)plant) + ": " + String(plant_sensor_value[CURRENT][plant], 4)).c_str());
             digitalWrite(O_PLANT_WATERING_PINS[plant], HIGH);
@@ -223,7 +226,7 @@ void onTick()
       {
         int value = max(0, min(static_cast<int>(MAX_ANALOG_VALUE), analogRead(A0)));
         lightsensor_value[CURRENT] = 100.0f - 100.0f*static_cast<float>(value)/static_cast<float>(MAX_ANALOG_VALUE);
-        //LOG_DEBUG((String("onTick - light sensor. Read value ")+String((int)lightsensor_value[CURRENT])).c_str());
+        LOG_DEBUG((String("onTick - light sensor. Read value ")+String((int)lightsensor_value[CURRENT])).c_str());
         ticker.attach_ms(DELAY_BETWEEN_ACTIVE_SENSORS, onTick);
         state = READ_TEMPHUMIDSENSOR;
         break;
