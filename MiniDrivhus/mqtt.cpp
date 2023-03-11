@@ -174,13 +174,13 @@ bool MQTT::connectMQTT()
       LOG_INFO((String("Subscribing to ") + topic).c_str());
       subscribe_ok &= mqtt_client.subscribe(topic.c_str());
  
-      byte i;
-      for (i=0; i<MAX_PLANT_COUNT; i++)
+      byte j;
+      for (j=0; j<MAX_PLANT_COUNT; j++)
       {
         String config = F("config/");
         
         String plant = F("plant");
-        plant += String(i);
+        plant += String(j);
         plant += F("/");
         
         topic = String(g_settings.mqtt_sensorid_param)+config+plant+F("enabled");
@@ -243,5 +243,7 @@ void MQTT::initialize()
 
 void MQTT::loop()
 {
-  mqtt_client.loop();
+  do {
+    mqtt_client.loop();
+  } while (esp_client.available() > 0);
 }
