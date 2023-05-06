@@ -382,7 +382,16 @@ void loop()
         updateValue(F("temp"), tempsensor_value[CURRENT], tempsensor_value[OLD]);
         updateValue(F("humidity"), humiditysensor_value[CURRENT], humiditysensor_value[OLD]);
 
-        fan_value[CURRENT] = ((tempsensor_value[CURRENT]>=g_settings.conf_fan_activate_temp_value) || (humiditysensor_value[CURRENT]>=g_settings.conf_fan_activate_humid_value)) ? 1 : 0;
+        fan_value[CURRENT] = fan_value[OLD];
+        if ((tempsensor_value[CURRENT]>=g_settings.conf_fan_activate_temp_value*1.005) || (humiditysensor_value[CURRENT]>=g_settings.conf_fan_activate_humid_value*1.005))
+        {
+          fan_value[CURRENT] = 1;
+        }
+        if ((tempsensor_value[CURRENT]<=g_settings.conf_fan_activate_temp_value*0.995) || (humiditysensor_value[CURRENT]<=g_settings.conf_fan_activate_humid_value*0.995))
+        {
+          fan_value[CURRENT] = 0;
+        }
+
         if (fan_value[CURRENT] != fan_value[OLD])
         {
           digitalWrite(O_FAN_RELAY_ACTIVATE_PIN, fan_value[CURRENT]==0 ? LOW : HIGH);
